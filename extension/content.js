@@ -2,7 +2,38 @@
   if (globalThis.__newsBridge) return;
   globalThis.__newsBridge = true;
   let generation = 0, job = null, inserted = [], panel = null, lastURL = location.href;
-  let pageObserver=null,pageCheckTimer=null;
+  let pageObserver=null,pageCheckTimer=null,homeObserver=null,homeTimer=null,homeSaveTimer=null;
+  let homeRecords=new Map(),homeMeta=null,homeRestoring=false;
+  const homeMessage=(action,payload)=>(chrome.runtime.sendMessage?.({action,payload})||Promise.resolve(null));
+  function saveHome(){
+    if(!homeMeta||!wsjHome())return;
+    clearTimeout(homeSaveTimer);
+    homeSaveTimer=setTimeout(()=>{homeMessage('homeSnapshotSave',{...homeMeta,records:[...homeRecords.values()]}).catch(()=>{});},100);
+  }
+  async function restoreHome(){
+    if(!wsjHome()||homeRestoring||homeMeta)return;
+    homeRestoring=true;const epoch=generation,url=location.href;
+    try{
+      const reply=await homeMessage('homeSnapshotRead');const saved=reply?.data;
+      if(!saved||epoch!==generation||url!==location.href||homeMeta)return;
+      homeMeta=saved;homeRecords=new Map(saved.records.map(r=>[r.group+'\u0000'+r.text,r]));
+      function mount(){
+        homeTimer=null;if(epoch!==generation||!wsjHome())return;
+        const entries=collect();let count=0;
+        for(const entry of entries){
+          const record=homeRecords.get(entry.group+'\u0000'+entry.text);
+          if(!record)continue;
+          const after=entry.insertAfter||entry.el;
+          if(!after.nextElementSibling?.classList.contains('nb-translation'))mountTranslation(entry,record.value);
+          count++;
+        }
+        if(count)status(`已恢复 ${count} 段译文 · 本次不消耗 Token`+(entries.length>count?' · 有新内容待译':''),false,
+          entries.length>count?()=>begin(saved.model,saved.provider,saved.sessionId):null);
+      }
+      homeObserver=new MutationObserver(()=>{if(!homeTimer)homeTimer=setTimeout(mount,350);});
+      homeObserver.observe(document.body,{childList:true,subtree:true,characterData:true});mount();
+    }catch{}finally{homeRestoring=false;}
+  }
   const excluded = 'nav,footer,aside,form,button,textarea,input,select,pre,code,[role="navigation"],[role="dialog"],[aria-hidden="true"],[contenteditable="true"],.nb-translation';
   const textOf = el => (el.innerText || '').replace(/\s+/g, ' ').trim();
   const visible = el => {
@@ -102,20 +133,38 @@
       panel.className='cgpt-news-status';panel.dataset.cgptNewsStatus='1';
       panel.style.cssText = 'all:initial;position:fixed;right:22px;bottom:22px;z-index:2147483647;';
       const shadow = panel.attachShadow({mode:'closed'});
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes nbPillIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+        .box{display:flex;align-items:center;gap:8px;font:500 12.5px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(135deg,rgba(20,42,34,.95),rgba(14,30,24,.97));color:#f2f7f4;padding:8px 10px 8px 13px;border-radius:999px;border:1px solid rgba(168,230,193,.2);box-shadow:0 10px 28px -4px rgba(8,22,16,.38),0 2px 6px rgba(0,0,0,.18);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);max-width:min(380px,calc(100vw - 44px));animation:nbPillIn .2s cubic-bezier(.16,1,.3,1)}
+        .dot{width:7px;height:7px;border-radius:50%;background:#5be3a6;box-shadow:0 0 8px rgba(91,227,166,.7);flex:none}
+        .dot.err{background:#ffb46b;box-shadow:0 0 8px rgba(255,180,107,.7)}
+        #label{letter-spacing:.01em;overflow-wrap:anywhere}
+        button{margin-left:2px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.1);color:#f4faf6;border-radius:999px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11.5px;font-weight:500;line-height:1.3;white-space:nowrap;transition:background .15s,border-color .15s,transform .1s}
+        button:hover{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.28)}
+        button:active{transform:scale(.97)}
+      `;
       const box = document.createElement('div');
+      box.className = 'box';
       box.setAttribute('role','status');box.setAttribute('aria-live','polite');
-      box.style.cssText = 'font:12px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#203b31;color:#fff;padding:11px 13px;border-radius:10px;box-shadow:0 5px 20px #0003;max-width:min(320px,calc(100vw - 44px));';
+      const dot = document.createElement('i'); dot.className = 'dot'; dot.setAttribute('aria-hidden','true');
       const label = document.createElement('span'); label.id = 'label';
       const close = document.createElement('button'); close.textContent = '恢复原文';
-      close.style.cssText = 'margin-left:10px;border:0;background:#ffffff20;color:white;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;';
-      close.onclick = restore; const again=document.createElement('button');again.textContent='继续翻译';again.style.cssText=close.style.cssText;again.hidden=true;box.append(label,again,close); shadow.append(box); panel.label = label;panel.retry=again;
+      close.onclick = ()=>restore();
+      const again = document.createElement('button'); again.textContent = '继续翻译'; again.hidden = true;
+      box.append(dot,label,again,close); shadow.append(style,box);
+      panel.label = label; panel.retry = again; panel.dot = dot;
       document.documentElement.append(panel);
     }
     panel.retry.hidden=!retry;panel.retry.onclick=()=>{panel.retry.hidden=true;retry?.();};
     panel.label.textContent = message;
-    panel.label.style.color = isError ? '#ffce9b' : '#fff';
+    panel.label.style.color = isError ? '#ffd2a0' : '#f2f7f4';
+    panel.dot?.classList.toggle('err', !!isError);
   }
-  function restore() {
+  function restore(forget=true) {
+    if(forget&&wsjHome())homeMessage('homeSnapshotRemove').catch(()=>{});
+    homeMeta=null;homeRecords.clear();homeObserver?.disconnect();homeObserver=null;
+    clearTimeout(homeTimer);clearTimeout(homeSaveTimer);
     generation++;
     pageObserver?.disconnect();pageObserver=null;
     clearTimeout(pageCheckTimer);pageCheckTimer=null;
@@ -160,6 +209,30 @@
     // Content may already have arrived while the model was processing the page.
     schedule();
   }
+  function mountTranslation(entry,translated){
+    const node = document.createElement('div');
+    node.className = 'nb-translation'; node.lang = 'zh-CN'; node.translate = false;
+    const cs = getComputedStyle(entry.el);
+    node.style.color = cs.color;
+    // Shadow DOM prevents page typography and translation markup from colliding.
+    const root = node.attachShadow({mode:'closed'});
+    const isHeading = /^H[1-3]$/.test(entry.el.tagName);
+    const isSerif = /(georgia|times|serif|exchange|escrow|chronicle|tiempos|mercury|miller|garamond|caslon|palatino|baskerville)/i.test(cs.fontFamily||'') && !/sans-serif/i.test(cs.fontFamily||'');
+    const family = isHeading && isSerif
+      ? '"Songti SC","STSong","Noto Serif SC",-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",serif'
+      : '-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
+    const p = document.createElement('div');
+    p.textContent = translated;
+    p.style.cssText = `font:400 .95em/1.78 ${family};letter-spacing:.015em;color:inherit;color:color-mix(in srgb,currentColor 85%,#1e5a44);border-left:2.5px solid #4d8b70;border-radius:0 6px 6px 0;background:linear-gradient(90deg,rgba(45,114,86,.05) 0%,rgba(45,114,86,.012) 65%,transparent 100%);padding:4px 10px 4px 13px;margin:6px 0 18px;white-space:pre-wrap;overflow-wrap:anywhere;`;
+    if(isHeading){
+      const size=parseFloat(cs.fontSize);
+      if(Number.isFinite(size))p.style.fontSize=Math.min(Math.round(size*.88),28)+'px';
+      p.style.fontWeight='580';p.style.lineHeight='1.42';p.style.letterSpacing='-.005em';
+      p.style.borderLeftWidth='3px';p.style.borderLeftColor='#2e6f54';p.style.margin='8px 0 16px';
+    }
+    root.append(p); (entry.insertAfter||entry.el).after(node); inserted.push(node);
+    return node;
+  }
   async function translate(model, entries, run,provider,sessionId) {
     try {
       const done = new Set(entries.map((e,i)=>(e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')?String(i):null).filter(x=>x!==null));
@@ -176,20 +249,8 @@
             if(!fresh)continue;
             entry=entries[Number(index)]=fresh;
           }
-          const node = document.createElement('div');
-          node.className = 'nb-translation'; node.lang = 'zh-CN'; node.translate = false;
-          node.style.color = getComputedStyle(entry.el).color;
-          // Shadow DOM prevents page typography and translation markup from colliding.
-          const root = node.attachShadow({mode:'closed'});
-          const p = document.createElement('div');
-          p.textContent = translated;
-          p.style.cssText = 'font:400 1em/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:inherit;border-left:2px solid #649b7e;padding:2px 0 2px 12px;margin:8px 0 17px;white-space:pre-wrap;overflow-wrap:anywhere;';
-          if(/^H[1-3]$/.test(entry.el.tagName)){
-            const size=parseFloat(getComputedStyle(entry.el).fontSize);
-            if(Number.isFinite(size))p.style.fontSize=Math.min(size,30)+'px';
-            p.style.fontWeight='550';p.style.lineHeight='1.45';
-          }
-          root.append(p); (entry.insertAfter||entry.el).after(node); inserted.push(node);
+          const node=mountTranslation(entry,translated);
+          if(wsjHome()){homeRecords.set(entry.group+'\u0000'+entry.text,{group:entry.group,text:entry.text,value:translated});saveHome();}
           if(node.isConnected)done.add(index);
         }
         status(`新闻双语 · ${done.size}/${entries.length}`);
@@ -204,7 +265,8 @@
     } catch(e) { if (run === generation){job=null;status(e.message+' · 已完成译文已保留',true,()=>translate(model,entries,run,provider,sessionId));} }
   }
   async function begin(model,provider,sessionId) {
-    restore();lastURL=location.href;
+    restore(false);lastURL=location.href;
+    if(wsjHome())homeMeta={model,provider,sessionId};
     const run=generation,started=Date.now();
     const wsj=/(^|\.)wsj\.com$/.test(location.hostname)&&!wsjHome();
     let entries=[],previous='',stable=0;
@@ -228,12 +290,15 @@
   chrome.runtime.onMessage.addListener((m,s,respond) => {
     if (s.id !== chrome.runtime.id) return;
     if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
+    if(m.action==='restoreHome'){restoreHome();respond({ok:true});}
     if (m.action === 'restore') { restore(); respond({ok:true}); }
     if (m.action === 'translate') {
       begin(m.model,m.provider,m.sessionId).then(respond).catch(()=>respond({ok:false,error:'无法读取正文，请稍后重试。'}));return true;
     }
   });
   // Stop an old article's translation after client-side navigation.
-  setInterval(()=>{if(location.href!==lastURL){lastURL=location.href;restore();}},1000);
-  addEventListener('pagehide',restore);
+  setInterval(()=>{if(location.href!==lastURL){restore(false);lastURL=location.href;restoreHome();}},500);
+  addEventListener('pagehide',()=>restore(false));
+  addEventListener('pageshow',()=>restoreHome());
+  restoreHome();
 })();

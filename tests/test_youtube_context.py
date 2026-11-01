@@ -45,7 +45,7 @@ class NativeCaptionTests(unittest.TestCase):
    manual.is_generated=False;manual.language_code='zh-Hans';manual.fetch.return_value=chinese
    store=CaptionStore();result=store.fetch('abcdefghijk');same=store.fetch('abcdefghijk')
    self.assertIs(result,same);api.return_value.list.assert_called_once_with('abcdefghijk')
-   self.assertEqual(result['nativeChinese'],{'source':'manual','language':'zh-Hans','translations':['利率上升。','一家银行。']})
+   self.assertEqual(result['nativeChinese'],{'source':'manual','language':'zh-Hans','translations':['利率上升。','一家银行。'],'cues':[{'text':'利率上升。','start':0,'duration':2},{'text':'一家银行。','start':2,'duration':2}]})
    manual.translate.assert_not_called()
 
 if __name__=='__main__':unittest.main()

@@ -1,3 +1,4 @@
+importScripts('home-snapshots.js');
 const BASE = 'http://127.0.0.1:19487';
 chrome.storage.local.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
 const startingTabs = new Set();
@@ -125,7 +126,7 @@ async function commandMessage(tab,message) {
     if(!box){box=document.createElement('div');box.id='cgpt-command-message';document.documentElement.append(box);}
     box.textContent=text;
     box.setAttribute('role','status');
-    box.style.cssText='position:fixed;right:18px;top:18px;z-index:2147483647;background:#203b31;color:white;font:13px/1.55 -apple-system,sans-serif;padding:10px 14px;border-radius:10px;max-width:min(320px,calc(100vw - 36px));box-shadow:0 5px 20px #0003;';
+    box.style.cssText='position:fixed;right:20px;top:20px;z-index:2147483647;background:linear-gradient(135deg,rgba(20,42,34,.95),rgba(14,30,24,.97));color:#f2f7f4;font:500 12.5px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;padding:9px 15px;border-radius:999px;border:1px solid rgba(168,230,193,.22);max-width:min(340px,calc(100vw - 40px));box-shadow:0 10px 28px -4px rgba(8,22,16,.38),0 2px 6px rgba(0,0,0,.18);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);';
     clearTimeout(box._newsBridgeTimer);box._newsBridgeTimer=setTimeout(()=>box.remove(),8000);
   },args:[message]}).catch(()=>{});
 }
@@ -173,8 +174,10 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   const trusted=sender.url?.startsWith(chrome.runtime.getURL(''));
   const action=message?.action;
   const captionDrag=action==='saveCaptionSize'&&/^https:\/\/(?:www\.)?youtube\.com\//.test(sender.url||'');
-  if(!trusted&&!captionDrag&&!['start','poll','cancel','transcript'].includes(action))return;
+  if(!trusted&&!captionDrag&&!['start','poll','cancel','transcript','homeSnapshotSave','homeSnapshotRead','homeSnapshotRemove'].includes(action))return;
   (async()=>{
+    if(['homeSnapshotSave','homeSnapshotRead','homeSnapshotRemove'].includes(action))return homeSnapshot(action,message.payload,sender);
+    if(action==='clearCache')await changeHomeSnapshots(()=>[]);
     if(action==='connect')return connectLocal();
     if(action==='diagnose')return service('diagnose');
     if(action==='service'){

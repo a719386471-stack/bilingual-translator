@@ -45,15 +45,22 @@ $('agy-login').onclick=async()=>{
 };
 setTimeout(agyStatus,500);
 
+function syncProviderCard(){
+  const cards=document.querySelectorAll('.account-card');
+  const active=$('provider').value||'chatgpt';
+  if(cards[0])cards[0].dataset.active=String(active==='chatgpt');
+  if(cards[1])cards[1].dataset.active=String(active==='antigravity');
+}
+syncProviderCard();
 async function installStatus(){
   try{
     const report=await api('diagnostics');$('installed-version').textContent='v'+report.version;
-    $('provider').value=report.provider||'chatgpt';
+    $('provider').value=report.provider||'chatgpt';syncProviderCard();
     $('extension-status').textContent=report.extensionPaired?'✓ 已自动连接 Chrome 插件。':'安装完成后，打开一次 Chrome 插件即可自动连接。';
     const box=$('checks');box.replaceChildren();
     for(const c of report.checks||[]){const row=document.createElement('div');row.className=c.state;row.textContent=(c.state==='ok'?'✓ ':'· ')+c.label+'：'+c.detail;box.append(row);}
   }catch(e){$('checks').textContent=e.message;}
 }
 $('check-install').onclick=installStatus;
-$('provider').onchange=async()=>{try{await api('provider',{provider:$('provider').value});$('message').textContent='已保存翻译来源。两边的账号连接都会保留。';}catch(e){$('message').textContent=e.message;}};
+$('provider').onchange=async()=>{syncProviderCard();try{await api('provider',{provider:$('provider').value});$('message').textContent='已保存翻译来源。两边的账号连接都会保留。';}catch(e){$('message').textContent=e.message;}};
 $('open-folder').onclick=async()=>{try{await api('open-extension-folder',{});$('message').textContent='插件文件夹已在 Finder 打开。';}catch(e){$('message').textContent=e.message;}};

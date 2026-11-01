@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory() as tmp:
   box=page.locator('#cgpt-youtube-subtitles').locator('div').first
   size=lambda:box.evaluate('(el)=>parseFloat(getComputedStyle(el).fontSize)')
   normal=size()
-  assert 24<normal<30,normal
+  assert 20<normal<24,normal
   page.set_viewport_size({'width':1600,'height':1000})
   page.wait_for_timeout(100)
   assert abs(size()-normal)<.1  # Same player, wider browser: font stays stable.

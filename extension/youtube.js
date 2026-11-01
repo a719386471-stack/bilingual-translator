@@ -5,7 +5,9 @@
   let dragging=false,suppressClick=null,finishDrag=null,retryButton;
   let batchSerial=0,pendingRange=null,latency=6,hasWindow=false,suspended=false,failedStart=0;
   let playerResize = null, resizeFrame = null;
-  let fontScale=100, nativeCount=0;
+  let fontScale=100, nativeCount=0, nativeTimeline=[];
+  const nativeIndices=new Set(), linePages=new Map();
+  const measure=document.createElement('canvas').getContext('2d');
   const validScale=value=>Math.max(50,Math.min(200,Number(value)||100));
   let cues = [], translated = new Map(), annotations = [], loading = false, model, provider, sessionId='', currentVideo = '';
   const text = el => el?.textContent?.replace(/\s+/g,' ').trim() || '';
@@ -36,7 +38,7 @@
     job=null;overlay?.remove();overlay=null;
     document.querySelectorAll('#cgpt-youtube-subtitles,.cgpt-transcript-translation').forEach(node=>node.remove());
     annotations.forEach(n=>n.remove());annotations=[];
-    cues=[];translated.clear();nativeCount=0;
+    cues=[];translated.clear();nativeCount=0;nativeTimeline=[];nativeIndices.clear();linePages.clear();
   }
   function resizeOverlay() {
     resizeFrame=null;
@@ -45,33 +47,41 @@
     // Use the actual player, including theater/fullscreen transitions, not viewport vw.
     const {width,height}=player.getBoundingClientRect();
     if(!width||!height)return;
-    const size=Math.max(16,Math.min(72,width*.029,height*.062))*fontScale/100;
+    const size=Math.max(14,Math.min(56,width*.024,height*.05))*fontScale/100;
     overlay.style.setProperty('--cgpt-caption-size',size+'px');
-    overlay.style.bottom=Math.max(48,Math.min(120,height*.085))+'px';
+    linePages.clear();
+    overlay.style.bottom=Math.max(40,Math.min(76,height*.065))+'px';
   }
   function scheduleOverlayResize() {
     if(resizeFrame===null)resizeFrame=requestAnimationFrame(resizeOverlay);
   }
   function makeOverlay() {
     overlay=document.createElement('div');overlay.id='cgpt-youtube-subtitles';
-    overlay.dataset.resizeProtocol='pointer-v2';overlay.dataset.bufferProtocol='adaptive-v1';
+    overlay.dataset.layoutProtocol='compact-timed-v1';overlay.dataset.resizeProtocol='pointer-v2';overlay.dataset.bufferProtocol='adaptive-v1';
     overlay.dataset.captionSource=nativeCount?(nativeCount===cues.length?'manual-chinese':'manual-chinese-and-ai'):'ai';
     overlay.style.cssText='position:absolute;left:8%;right:8%;bottom:70px;z-index:65;text-align:center;pointer-events:none;';
     const shadow=overlay.attachShadow({mode:'closed'});
     const style=document.createElement('style');style.textContent=`
-      #caption-box{position:relative;display:inline-block;box-sizing:border-box;max-width:100%;color:white;pointer-events:auto;
-        font:500 var(--cgpt-caption-size,24px)/1.35 -apple-system,"PingFang SC",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;
-        text-shadow:0 1px 3px #000,1px 0 2px #000,-1px 0 2px #000;outline:1px solid transparent;outline-offset:5px;border-radius:3px}
-      #caption-box[hidden]{display:none}.line{display:table;box-sizing:border-box;max-width:100%;margin:0 auto;background:#0006;padding:.04em .22em;border-radius:.1em}
-      .line:empty{display:none}.original{font-size:.8em;opacity:.94}.translated{margin-top:.1em}
-      .tools{position:absolute;left:50%;bottom:calc(100% + 12px);transform:translateX(-50%);display:flex;align-items:center;gap:9px;
-        opacity:0;visibility:hidden;pointer-events:none;white-space:nowrap;font:12px/1.5 -apple-system,sans-serif;background:#203b31fa;color:#f1f6f2;
-        border-radius:8px;padding:6px 9px;text-shadow:none;box-shadow:0 4px 14px #0004;transition:opacity .12s}
-      .tools button{border:0;background:transparent;color:inherit;padding:1px 3px;font:inherit;cursor:pointer}
-      .resize{position:absolute;width:14px;height:14px;padding:0;border:0;border-radius:2px;background:#d5fff0;opacity:0;visibility:hidden;pointer-events:none}
-      .nw{left:-10px;top:-10px;cursor:nwse-resize}.ne{right:-10px;top:-10px;cursor:nesw-resize}
-      .sw{left:-10px;bottom:-10px;cursor:nesw-resize}.se{right:-10px;bottom:-10px;cursor:nwse-resize}
-      #caption-box:hover,#caption-box:focus-within,#caption-box.resizing{outline-color:#b3e6d4aa}
+      #caption-box{position:relative;display:inline-block;box-sizing:border-box;max-width:100%;color:#fff;pointer-events:auto;
+        font:500 var(--cgpt-caption-size,22px)/1.18 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;
+        background:linear-gradient(180deg,rgba(14,22,18,.30),rgba(10,16,13,.40));backdrop-filter:none;-webkit-backdrop-filter:none;
+        border:1px solid rgba(255,255,255,.06);box-shadow:0 2px 6px rgba(0,0,0,.12);padding:.07em .34em .09em;
+        text-shadow:0 1px 3px #000,0 0 2px #000;outline:1.5px solid transparent;outline-offset:4px;border-radius:.32em;transition:outline-color .15s,box-shadow .15s}
+      #caption-box[hidden]{display:none}.line{display:table;box-sizing:border-box;max-width:100%;margin:0 auto;padding:0;border-radius:.1em}
+      .line:empty{display:none}
+      .original{font-size:.74em;font-weight:450;line-height:1.16;color:rgba(232,242,237,.86);letter-spacing:.005em}
+      .translated{margin-top:.05em;font-weight:560;line-height:1.18;color:#fff;letter-spacing:.015em}
+      .tools{position:absolute;left:50%;bottom:calc(100% + 12px);transform:translateX(-50%);display:flex;align-items:center;gap:8px;
+        opacity:0;visibility:hidden;pointer-events:none;white-space:nowrap;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;
+        background:linear-gradient(135deg,rgba(20,42,34,.95),rgba(14,30,24,.97));color:#f1f7f3;border:1px solid rgba(168,230,193,.22);
+        border-radius:999px;padding:5px 10px 5px 12px;text-shadow:none;box-shadow:0 8px 22px rgba(0,0,0,.42);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:opacity .15s}
+      .tools button{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.1);color:#fff;padding:2px 8px;border-radius:999px;font-family:inherit;font-size:11px;font-weight:500;line-height:1.35;cursor:pointer;transition:background .15s,border-color .15s}
+      .tools button:hover{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.3)}
+      .resize{position:absolute;width:13px;height:13px;padding:0;border:2px solid #163327;border-radius:50%;background:#7ce8b8;box-shadow:0 2px 6px rgba(0,0,0,.45);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s,transform .15s,background .15s}
+      .resize:hover{transform:scale(1.18);background:#aaf7d4}
+      .nw{left:-8px;top:-8px;cursor:nwse-resize}.ne{right:-8px;top:-8px;cursor:nesw-resize}
+      .sw{left:-8px;bottom:-8px;cursor:nesw-resize}.se{right:-8px;bottom:-8px;cursor:nwse-resize}
+      #caption-box:hover,#caption-box:focus-within,#caption-box.resizing{outline-color:rgba(134,228,186,.65)}
       #caption-box:hover .tools,#caption-box:focus-within .tools,#caption-box.resizing .tools,#caption-box.notice .tools,
       #caption-box:hover .resize,#caption-box:focus-within .resize,#caption-box.resizing .resize{opacity:1;visibility:visible;pointer-events:auto}
       #caption-box.resizing{user-select:none}
@@ -145,10 +155,42 @@
     // Do not leave the final line on screen after its unknown end time.
     return i>=0 && time < (cues[i].end ?? (cues[i+1]?.start ?? cues[i].start+8)) ? i : -1;
   }
+  // Show every word in timed fragments instead of stacking long cues or clipping them.
+  function lineAt(value,cue,time,node) {
+    const full=String(value||'').replace(/\s+/g,' ').trim();
+    node.title=full;
+    if(!full||!cue)return full;
+    const css=getComputedStyle(node),width=Math.max(60,overlay.clientWidth-38);
+    const key=css.font+'|'+width+'|'+full;
+    let pages=linePages.get(key);
+    if(!pages){
+      measure.font=css.font;pages=[];let rest=Array.from(full);
+      while(rest.length){
+        let count=0,lastBreak=0;
+        while(count<rest.length&&measure.measureText(rest.slice(0,count+1).join('')).width<=width){
+          if(/[\s，。！？；、,.!?;:]/u.test(rest[count]))lastBreak=count+1;
+          count++;
+        }
+        if(count<rest.length&&lastBreak>count*.55)count=lastBreak;
+        count=Math.max(1,count);pages.push(rest.splice(0,count).join('').trim());
+      }
+      if(linePages.size>120)linePages.clear();linePages.set(key,pages);
+    }
+    const duration=Math.max(.1,(cue.end??cue.start+8)-cue.start);
+    const progress=Math.max(0,Math.min(.999999,(time-cue.start)/duration));
+    let remaining=progress*pages.reduce((n,p)=>n+p.length,0);
+    for(const page of pages){remaining-=page.length;if(remaining<0)return page;}
+    return pages.at(-1)||'';
+  }
+  function manualAt(time){
+    let lo=0,hi=nativeTimeline.length;
+    while(lo<hi){const mid=(lo+hi)>>1;if(nativeTimeline[mid].start<=time)lo=mid+1;else hi=mid;}
+    const cue=nativeTimeline[lo-1];return cue&&time<cue.end?cue:null;
+  }
   function annotateCue(i,value) {
     if(!cues[i].el?.isConnected)return;
     const node=document.createElement('div');node.className='cgpt-transcript-translation';node.textContent=value;node.lang='zh-CN';
-    node.style.cssText='color:var(--yt-spec-text-secondary,#aaa);font:14px/1.6 sans-serif;padding:4px 12px 9px;white-space:pre-wrap;';
+    node.style.cssText='color:var(--yt-spec-text-primary,#e2eae5);opacity:.88;font:400 13.5px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:.01em;border-left:2px solid #4d8b70;margin:2px 12px 10px 10px;padding:3px 10px;background:rgba(77,139,112,.075);border-radius:0 6px 6px 0;white-space:pre-wrap;';
     cues[i].el.after(node);annotations.push(node);
   }
   function sourceLabel() {
@@ -207,9 +249,12 @@
     const video=document.querySelector('video');if(!video)return;
     if(document.querySelector('.ad-showing')){source.textContent='';target.textContent='';shell.hidden=true;return;}
     const index=cueAt(video.currentTime);
-    shell.hidden=index<0&&!dragging;
-    source.textContent=index>=0?cues[index].text:'';
-    target.textContent=index>=0?(translated.get(index)||(suspended?'暂未翻译 · 移到字幕上可继续':'正在翻译…')):'';
+    const cue=index>=0?cues[index]:null,manual=manualAt(video.currentTime);
+    shell.hidden=!cue&&!manual&&!dragging;
+    source.textContent=lineAt(cue?.text||'',cue,video.currentTime,source);
+    const originalManualGap=nativeTimeline.length&&nativeIndices.has(index)&&!manual;
+    const chinese=manual?.text||(originalManualGap?'':index>=0?(translated.get(index)||(suspended?'暂未翻译 · 移到字幕上可继续':'正在翻译…')):'');
+    target.textContent=lineAt(chinese,manual||cue,video.currentTime,target);
     const next=index>=0?index:cues.findIndex(c=>c.start>video.currentTime);
     if(next<0)return;
     // A far seek must not wait for a stale buffer from a different part of the video.
@@ -260,10 +305,13 @@
     if(native?.source==='manual'&&Array.isArray(native.translations)&&native.translations.length===cues.length){
       native.translations.forEach((value,i)=>{
         if(typeof value==='string'&&value.trim()&&/[\u3400-\u9fff]/.test(value)){
-          translated.set(i,value);nativeCount++;annotateCue(i,value);
+          translated.set(i,value);nativeIndices.add(i);nativeCount++;annotateCue(i,value);
         }
       });
     }
+    if(native?.source==='manual'&&Array.isArray(native.cues))nativeTimeline=native.cues
+      .filter(c=>typeof c.text==='string'&&Number.isFinite(c.start)&&Number.isFinite(c.duration)&&c.duration>0)
+      .map(c=>({text:c.text,start:c.start,end:c.start+c.duration})).sort((a,b)=>a.start-b.start);
     hasWindow=nativeCount>0;
     active=true;makeOverlay();label.textContent=sourceLabel()+' · 已就绪 '+translated.size+' / '+cues.length+' 条';timer=setInterval(tick,350);tick();
   }

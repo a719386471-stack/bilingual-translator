@@ -82,7 +82,8 @@ class CaptionStore:
                         chinese=[{'text':s.text,'start':s.start,'duration':s.duration} for s in raw if s.text.strip()]
                         if chinese and len(chinese)<=15000:
                             native={'language':track.language_code,'source':'manual',
-                                    'translations':align_manual_chinese(cues,chinese)}
+                                    'translations':align_manual_chinese(cues,chinese),
+                                    'cues':chinese}
                 except Exception:
                     # Optional track absence/failure cannot make English retrieval fail.
                     pass
