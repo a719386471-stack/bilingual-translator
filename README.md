@@ -4,7 +4,7 @@
 
 精简的 Chrome 扩展与本机助手，使用你自己的 ChatGPT 或 Google Antigravity 账号。项目独立开发，与 OpenAI、Google、WSJ、Reuters、YouTube 均无隶属或官方背书关系。
 
-> **当前为 0.7.0 测试版。安装包面向 Apple 芯片 Mac + Chrome；Windows、Intel Mac 尚未验收。需要先安装本机助手，单独加载扩展不能完成翻译。Chrome 应用商店尚未发布。**
+> **当前为 0.7.1 测试版。安装包面向 Apple 芯片 Mac + Chrome；Windows、Intel Mac 尚未验收。需要先安装本机助手，单独加载扩展不能完成翻译。Chrome 应用商店尚未发布。**
 
 ## 功能
 

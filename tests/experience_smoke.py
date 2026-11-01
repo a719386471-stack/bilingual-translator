@@ -67,9 +67,15 @@ with tempfile.TemporaryDirectory(prefix='translator-experience-') as tmp:
    ctx.set_offline(True);time.sleep(2.5);ctx.set_offline(False)
    expect(offline.locator('.nb-translation')).to_have_count(2,timeout=20000)
    assert calls.count('offline test')==1,calls
+   # Include a seven-digit total and an unreported request to catch marker wrapping.
+   app.usage.record('large-fixture','fixture-page',{'input':1500000,'output':361524,'total':1861524,'cached':0,'reasoning':0})
+   app.usage.record('unknown-fixture','fixture-page')
    # Mock account values and graphics never touch the live user's data.
    extid=worker.url.split('/')[2];popup=ctx.new_page();popup.set_viewport_size({'width':370,'height':592})
    popup.goto('chrome-extension://'+extid+'/popup.html');expect(popup.locator('#translate')).to_be_enabled(timeout=10000)
+   expect(popup.locator('#usage-today')).to_contain_text('＋',timeout=10000)
+   size=popup.locator('#usage-today').evaluate('(el)=>({scroll:el.scrollWidth,width:el.clientWidth,height:el.clientHeight,line:parseFloat(getComputedStyle(el).lineHeight)})')
+   assert size['scroll']<=size['width'] and size['height']<=size['line']+1,size
    popup.evaluate("()=>renderPage({url:'https://www.youtube.com/watch?v=fixture',title:'A clear example video title for an accessibility check'})")
    expect(popup.locator('#caption-control')).to_be_visible()
    popup.locator('#open-settings').click();popup.locator('#daily-alert').fill('250')

@@ -165,7 +165,10 @@ async function loadUsage(){
   if(usageLoading)return;usageLoading=true;
   try{
     const data=await api('usage');lastUsage=data;
-    for(const kind of ['session','page','today'])$('usage-'+kind).textContent=formatUsage(data[kind],kind==='session'&&!data.hasSession);
+    for(const kind of ['session','page','today']){
+      const node=$('usage-'+kind),value=formatUsage(data[kind],kind==='session'&&!data.hasSession);
+      node.textContent=value;node.classList.toggle('compact',value.length>=10);node.classList.toggle('extra-wide',value.length>=13);
+    }
     const missing=['session','page','today'].some(k=>data[k]?.unreported);
     const estimated=['session','page','today'].some(k=>data[k]?.estimated_total);
     $('usage-note').textContent=(missing?'＋ 部分请求未返回用量\n':'')+(estimated?'≈ 含可见文本估算，不含内部提示和推理\n':'')+'官方输入中的缓存及输出中的推理已包含在总量内。缓存命中不新增模型请求；不能用 Token 推算订阅额度。';
