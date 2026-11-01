@@ -1,5 +1,5 @@
 <p align="center"><img src="logo.svg" width="88" alt="双语翻译器"></p>
-<h1 align="center">双语翻译器</h1>
+<h1 align="center">Chrome 谷歌浏览器插件｜双语翻译器</h1>
 <p align="center">新闻网页与 YouTube，中英对照阅读。</p>
 
 精简的 Chrome 扩展与本机助手，使用你自己的 ChatGPT 或 Google Antigravity 账号。项目独立开发，与 OpenAI、Google、WSJ、Reuters、YouTube 均无隶属或官方背书关系。
