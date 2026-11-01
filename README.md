@@ -19,7 +19,7 @@
 
 ## 安装（Apple 芯片 Mac）
 
-1. 从 [Releases](https://github.com/a719386471-stack/bilingual-translator/releases) 下载最新版 `双语翻译器-版本号-Mac-Apple芯片.zip` 并解压。
+1. 从 [Releases](https://github.com/a719386471-stack/bilingual-translator/releases) 下载最新版 `bilingual-translator-版本号-macos-arm64.zip` 并解压。
 2. 双击 **安装与修复.command**。包内包含经 SHA-256 校验的独立 Python 和锁定版本依赖；无需 Homebrew、Xcode 或手动安装 Python。
 3. 按安装完成页提示，在 Chrome 开发者模式加载助手指定的 `extension` 文件夹。不要重复加载解压包里的副本。
 4. 打开扩展 → **账号与设置**，登录自己的 ChatGPT 或 Antigravity。ChatGPT 通道需要本机安装并登录官方 Codex/ChatGPT 组件；Antigravity 可通过包内 **安装Antigravity.command** 获取官方 ACP 组件，再本人完成 Google 登录。
