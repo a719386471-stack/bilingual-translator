@@ -14,6 +14,7 @@
 - ChatGPT / Antigravity 来源切换，各自保留模型偏好。
 - 本次、本页累计与今日 Token 统计；官方值缺失时使用明确标注的估算，未返回用量的请求单独提示。可选每日提醒，默认关闭。显示提供方实际开放的额度窗口，不承诺统一订阅余额。
 - 断线恢复、有限次数重试、本机译文缓存、停止并恢复原文。
+- 新闻完成后如果网页继续加载正文，会提示新增段落；选择继续才再次请求模型，可能增加用量。
 
 不包含聊天侧栏、背单词、OCR、无字幕音频识别或视频下载功能。不同网站布局、受限视频、直播和 Shorts 可能不支持。
 
@@ -69,7 +70,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-浏览器测试另需 `requirements-dev.txt` 与 Playwright Chromium；`tests/browser_smoke.py`、`tests/sites_smoke.py`、`tests/recovery_smoke.py`、`tests/experience_smoke.py` 使用隔离配置与模拟翻译，不消耗真实账号额度。`tests/distribution_smoke.py` 面向完整离线安装包，在隔离数据目录验证首次安装、Native Messaging、修复、目录移动和可恢复卸载。
+浏览器测试另需 `requirements-dev.txt` 与 Playwright Chromium；`tests/browser_smoke.py`、`tests/sites_smoke.py`、`tests/recovery_smoke.py`、`tests/experience_smoke.py`、`tests/news_updates_smoke.py` 使用隔离配置与模拟翻译，不消耗真实账号额度。`tests/distribution_smoke.py` 面向完整离线安装包，在隔离数据目录验证首次安装、Native Messaging、修复、目录移动和可恢复卸载。
 
 ```sh
 python build_release.py --assets /path/to/verified-distribution-assets

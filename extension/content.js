@@ -2,6 +2,7 @@
   if (globalThis.__newsBridge) return;
   globalThis.__newsBridge = true;
   let generation = 0, job = null, inserted = [], panel = null, lastURL = location.href;
+  let pageObserver=null,pageCheckTimer=null;
   const excluded = 'nav,footer,aside,form,button,textarea,input,select,pre,code,[role="navigation"],[role="dialog"],[aria-hidden="true"],[contenteditable="true"],.nb-translation';
   const textOf = el => (el.innerText || '').replace(/\s+/g, ' ').trim();
   const visible = el => {
@@ -116,6 +117,8 @@
   }
   function restore() {
     generation++;
+    pageObserver?.disconnect();pageObserver=null;
+    clearTimeout(pageCheckTimer);pageCheckTimer=null;
     if (job) api('cancel',null,job).catch(()=>{});
     job = null;
     for (const node of inserted) node.remove();
@@ -130,6 +133,32 @@
     }
     inserted = [];
     panel?.remove(); panel = null;
+  }
+  function watchForNewContent(entries,run,model,provider,sessionId){
+    pageObserver?.disconnect();clearTimeout(pageCheckTimer);pageCheckTimer=null;
+    // Count rather than deduplicate, so identical text in two cards stays distinct.
+    const signature=e=>e.group+'\u0000'+e.text;
+    const known=new Map();for(const e of entries){const k=signature(e);known.set(k,(known.get(k)||0)+1);}
+    let nextCheck=0;
+    function check(){
+      pageCheckTimer=null;
+      if(run!==generation)return;
+      nextCheck=Date.now()+5000;
+      const available=new Map(known);let added=0;
+      for(const e of collect()){
+        const key=signature(e),count=available.get(key)||0;
+        if(count)available.set(key,count-1);else added++;
+      }
+      if(added){
+        pageObserver?.disconnect();pageObserver=null;
+        status(`网页新增 ${added} 段 · 继续翻译可能增加用量`,false,()=>begin(model,provider,sessionId));
+      }
+    }
+    const schedule=()=>{if(!pageCheckTimer)pageCheckTimer=setTimeout(check,Math.max(1200,nextCheck-Date.now()));};
+    pageObserver=new MutationObserver(schedule);
+    pageObserver.observe(document.body,{childList:true,subtree:true,characterData:true});
+    // Content may already have arrived while the model was processing the page.
+    schedule();
   }
   async function translate(model, entries, run,provider,sessionId) {
     try {
@@ -167,7 +196,7 @@
 
         if (['done','cancelled'].includes(state.status)) {
           job = null;
-          if(done.size===entries.length)status(`双语已就绪 · ${done.size} 段`);
+          if(done.size===entries.length){status(`双语已就绪 · ${done.size} 段`);watchForNewContent(entries,run,model,provider,sessionId);}
           else status(`仅显示 ${done.size}/${entries.length} 段 · 网页内容已变化，请重新翻译`,true);
         }
       }});
