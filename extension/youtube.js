@@ -7,7 +7,7 @@
   let playerResize = null, resizeFrame = null;
   let fontScale=100, nativeCount=0;
   const validScale=value=>Math.max(50,Math.min(200,Number(value)||100));
-  let cues = [], translated = new Map(), annotations = [], loading = false, model, provider, currentVideo = '';
+  let cues = [], translated = new Map(), annotations = [], loading = false, model, provider, sessionId='', currentVideo = '';
   const text = el => el?.textContent?.replace(/\s+/g,' ').trim() || '';
   const wait = ms => new Promise(r => setTimeout(r,ms));
   const api=(...args)=>globalThis.__cgptBridge.raw(...args);
@@ -65,8 +65,8 @@
       #caption-box[hidden]{display:none}.line{display:table;box-sizing:border-box;max-width:100%;margin:0 auto;background:#0006;padding:.04em .22em;border-radius:.1em}
       .line:empty{display:none}.original{font-size:.8em;opacity:.94}.translated{margin-top:.1em}
       .tools{position:absolute;left:50%;bottom:calc(100% + 12px);transform:translateX(-50%);display:flex;align-items:center;gap:9px;
-        opacity:0;visibility:hidden;pointer-events:none;white-space:nowrap;font:11px/1.5 -apple-system,sans-serif;background:#15251fef;color:#e4ede8;
-        border-radius:6px;padding:5px 8px;text-shadow:none;transition:opacity .12s}
+        opacity:0;visibility:hidden;pointer-events:none;white-space:nowrap;font:12px/1.5 -apple-system,sans-serif;background:#203b31fa;color:#f1f6f2;
+        border-radius:8px;padding:6px 9px;text-shadow:none;box-shadow:0 4px 14px #0004;transition:opacity .12s}
       .tools button{border:0;background:transparent;color:inherit;padding:1px 3px;font:inherit;cursor:pointer}
       .resize{position:absolute;width:14px;height:14px;padding:0;border:0;border-radius:2px;background:#d5fff0;opacity:0;visibility:hidden;pointer-events:none}
       .nw{left:-10px;top:-10px;cursor:nwse-resize}.ne{right:-10px;top:-10px;cursor:nesw-resize}
@@ -182,7 +182,7 @@
     try{
       if(!indices.length)return;
       label.textContent=hasWindow?'正在准备后续字幕…':'正在翻译当前字幕…';
-      await globalThis.__cgptBridge.run({title:document.title,model,provider,kind:'captions',paragraphs:indices.map(i=>cues[i].text),...contextFor(indices)},{
+      await globalThis.__cgptBridge.run({title:document.title,model,provider,sessionId,kind:'captions',paragraphs:indices.map(i=>cues[i].text),...contextFor(indices)},{
         cancelled:()=>!valid(),id:id=>{if(valid())job=id;},notice:message=>{if(valid())label.textContent=message;},
         update:state=>{
           if(!valid())return;
@@ -224,8 +224,8 @@
     const lead=Math.max(18,Math.min(55,latency*1.5+8))*(video.playbackRate||1);
     if(!hasWindow||!translated.has(next)||(!video.paused&&ahead<lead))loadBatch(missing,run);
   }
-  async function start(chosen,scale,chosenProvider) {
-    stop();fontScale=validScale(scale);const epoch=run;model=chosen;provider=chosenProvider;currentVideo=new URL(location.href).searchParams.get('v');
+  async function start(chosen,scale,chosenProvider,chosenSession) {
+    stop();fontScale=validScale(scale);const epoch=run;model=chosen;provider=chosenProvider;sessionId=chosenSession||'';currentVideo=new URL(location.href).searchParams.get('v');
     if(!currentVideo||!document.querySelector('video'))throw new Error('请打开一个 YouTube 视频，再点击翻译。');
     // Prefer the same public English segmentation on every start. The website's
     // transcript may switch between sentence-sized and short rolling fragments.
@@ -271,7 +271,7 @@
     if(s.id!==chrome.runtime.id)return;
     if(m.action==='restore'){stop();reply({ok:true});}
     if(m.action==='captionSettings'){fontScale=validScale(m.scale);resizeOverlay();if(label)label.textContent='字幕大小 '+fontScale+'%';reply({ok:true});}
-    if(m.action==='translate'){start(m.model,m.captionScale,m.provider).then(()=>reply({ok:true})).catch(e=>reply({ok:false,error:e.message}));return true;}
+    if(m.action==='translate'){start(m.model,m.captionScale,m.provider,m.sessionId).then(()=>reply({ok:true})).catch(e=>reply({ok:false,error:e.message}));return true;}
   });
   addEventListener('pagehide',stop);
 })();

@@ -32,11 +32,13 @@ with tempfile.TemporaryDirectory(prefix='distribution-test-') as tmp:
    expect(popup.locator('#service-state')).to_have_text('已开启',timeout=20000)
    assert worker.evaluate('()=>chrome.storage.local.get("pairingKey")')['pairingKey']==original_key
    expect(popup.locator('#pairing')).to_be_hidden();expect(popup.locator('#translate')).to_be_disabled()
+   popup.locator('#open-settings').click()
    popup.locator('#diagnose').click();expect(popup.locator('#diagnostic-results')).to_contain_text('独立运行环境',timeout=10000)
    assert '安装版本：'+VERSION in popup.locator('#diagnostic-results').inner_text()
    worker.evaluate('()=>chrome.storage.local.set({pairingKey:"damaged-test-code"})')
-   popup.locator('#reconnect').click();expect(popup.locator('#message')).to_contain_text('无需复制连接码',timeout=10000)
+   popup.locator('#reconnect').click();expect(popup.locator('#settings-message')).to_contain_text('无需复制连接码',timeout=10000)
    assert worker.evaluate('()=>chrome.storage.local.get("pairingKey")')['pairingKey']==original_key
+   popup.locator('#settings-view .back').click()
    popup.locator('#service-toggle').click();expect(popup.locator('#service-toggle')).to_have_attribute('aria-checked','false',timeout=15000)
    popup.locator('#service-toggle').click();expect(popup.locator('#service-toggle')).to_have_attribute('aria-checked','true',timeout=15000)
    page=ctx.new_page();page.goto('http://127.0.0.1:19493/')

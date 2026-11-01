@@ -2,6 +2,7 @@ const BASE = 'http://127.0.0.1:19487';
 chrome.storage.local.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
 const startingTabs = new Set();
 let recoveryStart=null,lastRecovery=0;
+let lastAlertCheck=0,alertCheck=null;
 function failure(message,code='connection',retryable=true){return Object.assign(new Error(message),{code,retryable});}
 const captionScale = value => Math.max(50,Math.min(200,Number(value)||100));
 async function connectLocal(){
@@ -25,7 +26,8 @@ async function pageKey(raw) {
     return [...new Uint8Array(hash)].map(n=>n.toString(16).padStart(2,'0')).join('');
   } catch {return '';}
 }
-async function helper(action,payload,id,pageUrl) {
+async function helper(action,payload,id,pageUrl,tabId) {
+  let hasSession=false;
   if(['start','poll','transcript'].includes(action)){
     const {serviceWanted}=await chrome.storage.local.get('serviceWanted');
     if(serviceWanted===false)throw failure('翻译服务已关闭，打开面板开关后可以继续。','service_off',false);
@@ -36,7 +38,13 @@ async function helper(action,payload,id,pageUrl) {
   let route=paths[action];
   if(['poll','cancel'].includes(action)&&/^[a-f0-9]{32}$/.test(id))route=[action==='poll'?'GET':'DELETE','/api/jobs/'+id];
   if(!route)throw failure('不支持的操作。','invalid',false);
-  if(action==='usage')route=[route[0],route[1]+'?page='+await pageKey(pageUrl)];
+  if(action==='usage'){
+    const key=await pageKey(pageUrl),storageKey='translation-session:'+tabId;
+    const info=tabId?(await chrome.storage.session.get(storageKey))[storageKey]:null;
+    const session=info?.pageKey===key?info.id:'';
+    hasSession=!!session;
+    route=[route[0],route[1]+'?page='+key+'&session='+(session||'')];
+  }
   let {pairingKey}=await chrome.storage.local.get('pairingKey');
   if(!pairingKey){await connectLocal();({pairingKey}=await chrome.storage.local.get('pairingKey'));}
   if(!pairingKey)throw failure('请先在插件中填写本地助手的连接码。','auth',false);
@@ -62,6 +70,7 @@ async function helper(action,payload,id,pageUrl) {
   let data;
   try{data=await response.json();}catch{throw failure('连接中断，未收到完整结果，正在重新连接。');}
   if(!response.ok)throw failure(data.error||'本地助手请求失败',data.errorCode||'request_failed',data.retryable??response.status>=500);
+  if(action==='usage')data.hasSession=hasSession;
   return data;
 }
 async function service(action) {
@@ -80,7 +89,7 @@ async function pageAction(action,tab,ensureService=false) {
   startingTabs.add(tab.id);
   try {
     const saved=await chrome.storage.local.get(['model','modelsByProvider','captionScale']);
-    let model,provider;
+    let model,provider,sessionId='';
     if(action==='translate'){
       if(ensureService){await service('start');await chrome.storage.local.set({serviceWanted:true});}
       const state=await helper('status');
@@ -96,8 +105,16 @@ async function pageAction(action,tab,ensureService=false) {
       }
     }
     await chrome.scripting.executeScript({target:{tabId:tab.id},files:['recovery.js','youtube.js','content.js']});
-    const result=await chrome.tabs.sendMessage(tab.id,{action,model,provider,captionScale:captionScale(saved.captionScale)});
-    if(!result?.ok)throw new Error(result?.error||'无法读取本页');
+    const storageKey='translation-session:'+tab.id;
+    if(action==='translate'){
+      sessionId=crypto.randomUUID().replaceAll('-','');
+      await chrome.storage.session.set({[storageKey]:{id:sessionId,pageKey:await pageKey(tab.url)}});
+    }
+    let result;
+    try{result=await chrome.tabs.sendMessage(tab.id,{action,model,provider,sessionId,captionScale:captionScale(saved.captionScale)});}
+    catch(e){if(sessionId)await chrome.storage.session.remove(storageKey);throw e;}
+    if(!result?.ok){if(sessionId)await chrome.storage.session.remove(storageKey);throw new Error(result?.error||'无法读取本页');}
+    if(sessionId)await maybeDailyAlert(tab,true);
     return {ok:true};
   } finally {startingTabs.delete(tab.id);}
 }
@@ -107,10 +124,32 @@ async function commandMessage(tab,message) {
     let box=document.getElementById('cgpt-command-message');
     if(!box){box=document.createElement('div');box.id='cgpt-command-message';document.documentElement.append(box);}
     box.textContent=text;
-    box.style.cssText='position:fixed;right:22px;top:22px;z-index:2147483647;background:#173e34;color:white;font:13px/1.6 sans-serif;padding:12px 16px;border-radius:9px;max-width:360px;';
-    setTimeout(()=>box.remove(),8000);
+    box.setAttribute('role','status');
+    box.style.cssText='position:fixed;right:18px;top:18px;z-index:2147483647;background:#203b31;color:white;font:13px/1.55 -apple-system,sans-serif;padding:10px 14px;border-radius:10px;max-width:min(320px,calc(100vw - 36px));box-shadow:0 5px 20px #0003;';
+    clearTimeout(box._newsBridgeTimer);box._newsBridgeTimer=setTimeout(()=>box.remove(),8000);
   },args:[message]}).catch(()=>{});
 }
+async function maybeDailyAlert(tab,force=false){
+  const {dailyAlert}=await chrome.storage.local.get('dailyAlert');
+  if(!Number.isSafeInteger(dailyAlert)||dailyAlert<1||!tab?.id)return;
+  if(!force&&Date.now()-lastAlertCheck<10000)return;
+  if(alertCheck)return alertCheck;
+  lastAlertCheck=Date.now();
+  alertCheck=(async()=>{
+    try{
+      const usage=await helper('usage',null,null,tab.url,tab.id),today=usage.today;
+      if((today.total||0)+(today.estimated_total||0)<dailyAlert)return;
+      const key='daily-alert:'+usage.day+':'+dailyAlert;
+      if((await chrome.storage.session.get(key))[key])return;
+      const current=await chrome.tabs.get(tab.id);
+      if(await pageKey(current.url)!==await pageKey(tab.url))return;
+      await chrome.storage.session.set({[key]:true});
+      await commandMessage(tab,'今日 Token 已达到提醒值'+(today.estimated_total?'（含估算）':'')+'。翻译仍会继续。');
+    }catch{} // A warning never interrupts translation.
+  })().finally(()=>{alertCheck=null;});
+  return alertCheck;
+}
+chrome.tabs.onRemoved.addListener(id=>chrome.storage.session.remove('translation-session:'+id));
 function handleCommand(command,tab){
   if(command!=='translate-page')return;
   return (async()=>{
@@ -155,8 +194,10 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       if(!captionDrag&&tab?.id)await chrome.tabs.sendMessage(tab.id,{action:'captionSettings',scale}).catch(()=>{});
       return {scale};
     }
-    const url=action==='usage'?(await activeTab())?.url:(sender.tab?.url||sender.url);
-    return helper(action,message.payload,message.id,url);
+    const tab=action==='usage'?await activeTab():sender.tab;
+    const data=await helper(action,message.payload,message.id,tab?.url||sender.url,tab?.id);
+    if(action==='poll'&&tab)await maybeDailyAlert(tab,['done','error','cancelled'].includes(data.status));
+    return data;
   })().then(data=>respond({ok:true,data})).catch(error=>respond({ok:false,error:error.message,errorCode:error.code||'request_failed',retryable:!!error.retryable}));
   return true;
 });

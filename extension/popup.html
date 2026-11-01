@@ -1,20 +1,39 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>双语翻译器</title>
-<link rel="stylesheet" href="popup.css">
-<body><header><img class="mark" src="icons/icon-128.png" width="44" height="44" alt=""><div><strong>双语翻译器</strong><small>把世界新闻，读成双语</small></div></header>
-<div class="service-row"><div><strong>翻译服务 <span id="service-state">检查中…</span></strong><small>按需开启 · 不随电脑开机启动</small></div><button id="service-toggle" class="switch" role="switch" aria-label="翻译服务" aria-checked="false" disabled><span></span></button></div>
-<div class="provider-row"><label for="provider">翻译来源</label><select id="provider"><option value="chatgpt">ChatGPT</option><option value="antigravity">Antigravity · ACP</option></select></div>
-<div id="account" class="status">正在连接本地助手…</div>
-<div class="setup-actions"><button id="open-setup">账号与设置</button><button id="reconnect">重新连接</button><button id="diagnose">检查安装</button></div>
-<section id="diagnostics" hidden aria-label="安装检查"><div id="diagnostic-results"></div></section>
-<button id="connect-provider" class="secondary" hidden>连接 Antigravity</button>
-<details id="pairing" hidden><summary>手动连接（高级备用）</summary><label for="key">本机连接码</label><div class="row"><input id="key" type="password" placeholder="从助手页面复制" autocomplete="off"><button id="save">连接</button></div><a id="helper" href="#">打开本地助手 ↗</a></details>
-<section><label for="model">翻译模型</label><select id="model"><option value="">正在加载模型…</option></select></section>
-<section class="caption-control"><div class="setting-title"><label for="caption-size">YouTube 字幕大小</label><output id="caption-value" for="caption-size">100%</output><button id="caption-reset">默认</button></div><input id="caption-size" type="range" min="50" max="200" step="10" value="100"><small>实时生效并保存，全屏继续按比例放大</small></section>
-<button id="translate" class="primary" disabled>翻译当前页 / 视频</button>
-<p id="shortcut" class="shortcut">快捷键：⌥E · 按需启动服务并翻译</p>
-<button id="restore" class="secondary">停止并恢复原文</button>
-<div id="message" role="status" aria-live="polite"></div>
-<details id="quota"><summary>订阅剩余额度</summary><div id="quota-content">开启服务后查看</div><button id="quota-refresh">刷新额度</button></details>
-<section class="usage" aria-label="Token 用量"><div class="usage-grid"><div><small>当前页累计 Token</small><strong id="usage-page">—</strong><small id="usage-page-detail"></small></div><div><small>今日 Token</small><strong id="usage-today">—</strong><small id="usage-today-detail"></small></div></div><p id="usage-note">开启服务后查看用量</p></section>
-<footer>点击翻译才将正文发送给所选服务。<button id="clear">清除译文缓存</button><button id="apply-update" title="应用已安装的本地更新，保留账号和设置">应用更新</button></footer>
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>双语翻译器</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header class="header"><img class="logo" src="icons/icon-128.png" width="34" height="34" alt=""><strong>双语翻译器</strong>
+  <button id="service-toggle" class="service" role="switch" aria-label="翻译服务" aria-checked="false" disabled><i></i><span id="service-state">检查中</span><b aria-hidden="true"></b></button>
+  <button id="open-settings" class="icon" aria-label="账号与设置" title="账号与设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 3.5a8 8 0 0 0-.1-1.2l1.4-1.1-1.4-2.5-1.7.5a8 8 0 0 0-2-1.2l-.4-1.7h-2.9l-.5 1.7a8 8 0 0 0-2 1.2l-1.7-.5-1.4 2.5 1.4 1.1a8 8 0 0 0 0 2.4l-1.4 1.1 1.4 2.5 1.7-.5a8 8 0 0 0 2 1.2l.5 1.7h2.9l.4-1.7a8 8 0 0 0 2-1.2l1.7.5 1.4-2.5-1.4-1.1c.1-.4.1-.8.1-1.2Z" transform="translate(-2)"/></svg></button>
+</header>
+<main class="main" id="main">
+  <label class="field-label">翻译来源</label>
+  <div class="providers" role="group" aria-label="翻译来源"><button data-provider="chatgpt" aria-pressed="true">ChatGPT</button><button data-provider="antigravity" aria-pressed="false">Antigravity</button></div>
+  <select id="provider" hidden aria-label="翻译来源"><option value="chatgpt">ChatGPT</option><option value="antigravity">Antigravity</option></select>
+  <div class="model-row"><label for="model">模型</label><select id="model"><option value="">正在加载模型…</option></select></div>
+  <section class="page-info"><div class="page-kind"><span aria-hidden="true">◌</span> <span id="page-kind">当前页面</span></div><p id="page-title">打开英文新闻或 YouTube 视频</p><p id="page-hint">中英对照，按需翻译</p></section>
+  <button id="translate" class="primary" disabled><span id="translate-label">翻译当前页</span><kbd id="shortcut-key">⌥ E</kbd></button>
+  <div class="feedback"><span id="message" role="status" aria-live="polite">准备中…</span><button id="restore" class="text-button">恢复原文</button></div>
+  <p id="shortcut" class="sr-only">快捷键：⌥E</p>
+  <section id="caption-control" class="caption" hidden><div class="caption-title"><label for="caption-size">字幕大小</label><output id="caption-value" for="caption-size">100%</output><button id="caption-reset" class="text-button">重置</button></div><input id="caption-size" type="range" min="50" max="200" step="10" value="100"><p class="sr-only">可拖动视频内字幕角点调整，全屏按比例放大</p></section>
+  <section class="usage" aria-label="Token 用量"><div class="section-top"><span>Token 用量</span><button id="open-usage" class="text-button">详情 ↗</button></div><div class="usage-grid">
+    <div><small>本次翻译</small><strong id="usage-session">—</strong></div><div><small>本页累计</small><strong id="usage-page">—</strong></div><div><small>今日累计</small><strong id="usage-today">—</strong></div>
+  </div><p id="usage-alert" hidden></p></section>
+  <div class="quota-line"><span>官方订阅额度</span><span id="quota-short">正在检查…</span><button id="open-quota" class="text-button">详情 ›</button></div>
+</main>
+<footer><span>◎ 仅在翻译时发送内容</span><button id="open-settings-footer" class="text-button">设置与帮助</button></footer>
+<section id="settings-view" class="sheet" aria-label="账号与设置" hidden>
+  <div class="sheet-header"><button class="back icon" aria-label="返回">‹</button><h1>账号与设置</h1></div>
+  <div class="sheet-body"><p id="settings-message" role="status" hidden></p><div class="setting-group"><h2>账号与连接</h2><p id="account">正在连接本地助手…</p><div class="actions"><button id="open-setup" class="quiet">账号与设置 ↗</button><button id="reconnect" class="quiet">重新连接</button><button id="diagnose" class="quiet">检查安装</button></div>
+    <button id="connect-provider" class="quiet" hidden>连接 Antigravity</button><div id="diagnostics" hidden><div id="diagnostic-results"></div></div>
+    <details id="pairing" hidden><summary>手动连接（高级备用）</summary><label for="key">本机连接码</label><div class="code-row"><input id="key" type="password" autocomplete="off" placeholder="从助手页面复制"><button id="save" class="quiet">连接</button></div><button id="helper" class="text-button">打开本地助手 ↗</button></details>
+  </div>
+  <div class="setting-group"><h2>今日用量提醒</h2><p>达到设定的 Token 后提示一次，不会停止翻译。包含官方数值和可见文本估算。</p><div class="input-row"><input id="daily-alert" type="number" min="1" max="1000000000" step="1" placeholder="不提醒" aria-label="今日 Token 提醒值"><button id="save-alert" class="quiet">保存</button></div><p id="alert-setting-note" role="status">留空表示关闭 · 每日按新加坡时间重置</p></div>
+  <div class="setting-group"><h2>缓存与版本</h2><div class="setting-line"><span>本机译文缓存</span><button id="clear" class="text-button" disabled>清除缓存</button></div><div class="setting-line"><span>当前版本 <span id="version"></span></span><button id="check-update" class="text-button">查看最新版本 ↗</button></div><div class="setting-line"><span>已安装本地更新后</span><button id="apply-update" class="text-button">重新加载插件</button></div><p>查看最新版本会打开 GitHub；重新加载不会下载或安装新版。</p></div></div>
+</section>
+<section id="usage-view" class="sheet" aria-label="用量详情" hidden>
+  <div class="sheet-header"><button class="back icon" aria-label="返回">‹</button><h1>用量详情</h1></div><div class="sheet-body"><p class="muted">仅统计本插件 · 今日按新加坡时间计算</p><div id="usage-details"></div><p id="usage-note" class="note">开启服务后查看用量</p></div>
+</section>
+<section id="quota-view" class="sheet" aria-label="官方订阅额度" hidden>
+  <div class="sheet-header"><button class="back icon" aria-label="返回">‹</button><h1>官方订阅额度</h1></div><div class="sheet-body"><div id="quota-content">开启服务后查看</div><button id="quota-refresh" class="quiet">刷新额度</button><p class="note">仅显示服务方实际返回的额度窗口。Token 用量不能换算为订阅余额。</p></div>
+</section>
 <script src="popup.js"></script></body></html>

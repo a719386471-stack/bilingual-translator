@@ -364,6 +364,9 @@ class App:
         page_key=payload.get('pageKey','')
         if not isinstance(page_key,str) or (page_key and not re.fullmatch('[a-f0-9]{64}',page_key)):
             raise AppError('页面标识无效。')
+        session_id=payload.get('sessionId','')
+        if not isinstance(session_id,str) or (session_id and not re.fullmatch('[a-f0-9]{32}',session_id)):
+            raise AppError('本次翻译标识无效。')
         if not isinstance(paragraphs,list) or not 1<=len(paragraphs)<=500 or any(not isinstance(p,str) or not p.strip() or len(p)>12000 for p in paragraphs) or sum(map(len,paragraphs))>180000:
             raise AppError('正文格式或长度不符合要求。')
         if not isinstance(title,str) or len(title)>2000 or not isinstance(model,str) or not model or len(model)>150:
@@ -375,7 +378,7 @@ class App:
             raise AppError('请求标识无效。')
         try:options=policy.normalize_options(payload,paragraphs)
         except ValueError as exc:raise AppError(str(exc)) from None
-        identity=policy.digest([title,paragraphs,model,provider,page_key,kind,options,policy.POLICY_VERSION])
+        identity=policy.digest([title,paragraphs,model,provider,page_key,kind,options,policy.POLICY_VERSION,session_id])
         with self.jobs_lock:
             self.jobs = {k:v for k,v in self.jobs.items() if v['status']=='running' or v['created']>time.time()-1800}
             existing=self.jobs.get(request_id)
@@ -389,7 +392,7 @@ class App:
             else:
                 self.jobs[request_id]={'results':{},'status':'running','error':'','errorCode':'','retryable':False,
                     'phase':'preparing','retryAt':0,'created':time.time(),'cancel':threading.Event(),
-                    'page_key':page_key,'provider':provider,'kind':kind,'identity':identity,'options':options,'paidAttempts':{},'strategy':('captions' if kind=='captions' else ('feed' if options['newsMode']=='feed' else ('article' if sum(map(len,paragraphs))<=policy.FULL_ARTICLE_CHARS else 'long_article')))}
+                    'page_key':page_key,'session_id':session_id,'provider':provider,'kind':kind,'identity':identity,'options':options,'paidAttempts':{},'strategy':('captions' if kind=='captions' else ('feed' if options['newsMode']=='feed' else ('article' if sum(map(len,paragraphs))<=policy.FULL_ARTICLE_CHARS else 'long_article')))}
             self.pool.submit(self.run_job,request_id,title,paragraphs,model)
         return request_id
 
@@ -505,12 +508,12 @@ class App:
                     if count>=2:raise AppError('已达到本批重试上限，请稍后手动重试，避免重复消耗。','retry_limit',False)
                     job['paidAttempts'][batch_key]=count+1
                     rid=uuid.uuid4().hex
-                    self.usage.record(rid,job['page_key'],provider=job['provider'])
+                    self.usage.record(rid,job['page_key'],provider=job['provider'],session_id=job['session_id'])
                     try:
                         return self.infer(title,[paragraphs[i] for i in batch],policy.bounded_previous(previous),model,
                             provider=job['provider'],cancel=job['cancel'],reference=reference,
                             on_context=lambda value:new_context.update(value),
-                            on_usage=lambda counts:self.usage.record(rid,job['page_key'],counts,provider=job['provider']))
+                            on_usage=lambda counts:self.usage.record(rid,job['page_key'],counts,provider=job['provider'],session_id=job['session_id']))
                     except TranslationError as exc:
                         if job['paidAttempts'][batch_key]>=2:raise AppError(str(exc)+'（本批已停止自动重试）',exc.code,False,exc.retry_after) from None
                         raise
@@ -632,10 +635,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({**collect(self.app.data_dir,True),'extensionPaired':bool(read_json(self.app.data_dir/'extension-connected.json')),
                            'provider':self.app.provider()})
             elif path.path == '/api/usage':
-                page_key=dict(parse.parse_qsl(path.query)).get('page','')
+                params=dict(parse.parse_qsl(path.query));page_key=params.get('page','');session_id=params.get('session','')
                 if page_key and not re.fullmatch('[a-f0-9]{64}',page_key):
                     raise AppError('页面标识无效。')
-                self.send(self.app.usage.summary(page_key))
+                if session_id and not re.fullmatch('[a-f0-9]{32}',session_id):raise AppError('本次翻译标识无效。')
+                self.send(self.app.usage.summary(page_key,session_id=session_id))
             elif path.path == '/api/accounts':
                 self.send({'accounts':[{'email':a.get('email','账号'), 'client_id':a['client_id']} for a in self.app.config['accounts']]})
             elif path.path == '/api/models':

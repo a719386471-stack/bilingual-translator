@@ -102,10 +102,11 @@
       panel.style.cssText = 'all:initial;position:fixed;right:22px;bottom:22px;z-index:2147483647;';
       const shadow = panel.attachShadow({mode:'closed'});
       const box = document.createElement('div');
-      box.style.cssText = 'font:13px/1.6 -apple-system,sans-serif;background:#173e34;color:#fff;padding:14px 16px;border-radius:12px;box-shadow:0 5px 25px #0003;max-width:340px;';
+      box.setAttribute('role','status');box.setAttribute('aria-live','polite');
+      box.style.cssText = 'font:12px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#203b31;color:#fff;padding:11px 13px;border-radius:10px;box-shadow:0 5px 20px #0003;max-width:min(320px,calc(100vw - 44px));';
       const label = document.createElement('span'); label.id = 'label';
       const close = document.createElement('button'); close.textContent = '恢复原文';
-      close.style.cssText = 'margin-left:14px;border:0;background:#ffffff24;color:white;border-radius:5px;padding:5px 8px;cursor:pointer;';
+      close.style.cssText = 'margin-left:10px;border:0;background:#ffffff20;color:white;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;';
       close.onclick = restore; const again=document.createElement('button');again.textContent='继续翻译';again.style.cssText=close.style.cssText;again.hidden=true;box.append(label,again,close); shadow.append(box); panel.label = label;panel.retry=again;
       document.documentElement.append(panel);
     }
@@ -130,10 +131,10 @@
     inserted = [];
     panel?.remove(); panel = null;
   }
-  async function translate(model, entries, run,provider) {
+  async function translate(model, entries, run,provider,sessionId) {
     try {
       const done = new Set(entries.map((e,i)=>(e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')?String(i):null).filter(x=>x!==null));
-      await globalThis.__cgptBridge.run({model,provider,kind:'news',newsMode:entries.every(e=>e.group==='article')?'article':'feed',groups:entries.map(e=>e.group),title:document.title,paragraphs:entries.map(e=>e.text)},{
+      await globalThis.__cgptBridge.run({model,provider,sessionId:sessionId||'',kind:'news',newsMode:entries.every(e=>e.group==='article')?'article':'feed',groups:entries.map(e=>e.group),title:document.title,paragraphs:entries.map(e=>e.text)},{
         cancelled:()=>run!==generation,id:id=>{job=id;},notice:message=>{if(run===generation)status(message);},
         update:state=>{
         if(run!==generation)return;
@@ -153,7 +154,12 @@
           const root = node.attachShadow({mode:'closed'});
           const p = document.createElement('div');
           p.textContent = translated;
-          p.style.cssText = 'font:400 1em/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:inherit;border-left:3px solid #4c977a;padding:3px 0 3px 14px;margin:8px 0 20px;white-space:pre-wrap;overflow-wrap:anywhere;';
+          p.style.cssText = 'font:400 1em/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:inherit;border-left:2px solid #649b7e;padding:2px 0 2px 12px;margin:8px 0 17px;white-space:pre-wrap;overflow-wrap:anywhere;';
+          if(/^H[1-3]$/.test(entry.el.tagName)){
+            const size=parseFloat(getComputedStyle(entry.el).fontSize);
+            if(Number.isFinite(size))p.style.fontSize=Math.min(size,30)+'px';
+            p.style.fontWeight='550';p.style.lineHeight='1.45';
+          }
           root.append(p); (entry.insertAfter||entry.el).after(node); inserted.push(node);
           if(node.isConnected)done.add(index);
         }
@@ -166,9 +172,9 @@
         }
       }});
       job=null;
-    } catch(e) { if (run === generation){job=null;status(e.message+' · 已完成译文已保留',true,()=>translate(model,entries,run,provider));} }
+    } catch(e) { if (run === generation){job=null;status(e.message+' · 已完成译文已保留',true,()=>translate(model,entries,run,provider,sessionId));} }
   }
-  async function begin(model,provider) {
+  async function begin(model,provider,sessionId) {
     restore();lastURL=location.href;
     const run=generation,started=Date.now();
     const wsj=/(^|\.)wsj\.com$/.test(location.hostname)&&!wsjHome();
@@ -188,14 +194,14 @@
     if(!entries.length){status('没有找到英文正文，请打开一篇新闻文章再试。',true);return {ok:false,error:'没有找到英文正文，请打开一篇新闻文章再试。'};}
     if(entries.reduce((n,e)=>n+e.text.length,0)>180000||entries.length>500){status('本篇正文过长，请使用较短的文章。',true);return {ok:false,error:'本篇正文过长，请使用较短的文章。'};}
     status(`准备翻译 · ${entries.length} 段`);
-    translate(model,entries,run,provider);return {ok:true};
+    translate(model,entries,run,provider,sessionId);return {ok:true};
   }
   chrome.runtime.onMessage.addListener((m,s,respond) => {
     if (s.id !== chrome.runtime.id) return;
     if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
     if (m.action === 'restore') { restore(); respond({ok:true}); }
     if (m.action === 'translate') {
-      begin(m.model,m.provider).then(respond).catch(()=>respond({ok:false,error:'无法读取正文，请稍后重试。'}));return true;
+      begin(m.model,m.provider,m.sessionId).then(respond).catch(()=>respond({ok:false,error:'无法读取正文，请稍后重试。'}));return true;
     }
   });
   // Stop an old article's translation after client-side navigation.

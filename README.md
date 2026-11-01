@@ -4,7 +4,7 @@
 
 精简的 Chrome 扩展与本机助手，使用你自己的 ChatGPT 或 Google Antigravity 账号。项目独立开发，与 OpenAI、Google、WSJ、Reuters、YouTube 均无隶属或官方背书关系。
 
-> **当前为 0.6.0 测试版。安装包已在 Apple 芯片 Mac + Chrome 上验证；Windows、Intel Mac 尚未验收。需要先安装本机助手，单独加载扩展不能完成翻译。Chrome 应用商店尚未发布。**
+> **当前为 0.7.0 测试版。安装包面向 Apple 芯片 Mac + Chrome；Windows、Intel Mac 尚未验收。需要先安装本机助手，单独加载扩展不能完成翻译。Chrome 应用商店尚未发布。**
 
 ## 功能
 
@@ -12,7 +12,7 @@
 - YouTube：为有英文字幕的视频显示双语字幕，按播放位置预取；支持跳转、缓存、全屏字号跟随。
 - 字幕字号滑块、拖动角点调整大小、Option＋E 快捷翻译。
 - ChatGPT / Antigravity 来源切换，各自保留模型偏好。
-- 当前页与今日 Token 统计；官方值缺失时使用明确标注的估算。显示提供方实际开放的额度窗口，不承诺统一订阅余额。
+- 本次、本页累计与今日 Token 统计；官方值缺失时使用明确标注的估算，未返回用量的请求单独提示。可选每日提醒，默认关闭。显示提供方实际开放的额度窗口，不承诺统一订阅余额。
 - 断线恢复、有限次数重试、本机译文缓存、停止并恢复原文。
 
 不包含聊天侧栏、背单词、OCR、无字幕音频识别或视频下载功能。不同网站布局、受限视频、直播和 Shorts 可能不支持。
@@ -24,6 +24,8 @@
 - 视频有限预取，附带最多前后各3条字幕；有已译前文时一并提供。人工中文字幕可按时间对齐直接复用，缺失部分才使用AI，字幕来源明确显示。
 - 新提示规则独立缓存，旧规则译文不会冒充新结果。缓存改变后首次请求会重新消耗用量，今日/历史统计不清零。
 - 每个批次在同一任务内最多2次模型尝试，包括自动接续；登录/额度错误停止，手动新建任务会重新计数。服务重启时已有完成缓存可复用，未完成请求的提供方计费仍可能发生。
+- “本次”从该标签页按下翻译开始，包含自动重试和视频后续批次；重新翻译会开始新的一次，重启 Chrome 后不恢复本次标识。升级前的历史用量仍计入本页及今日，不冒充本次用量。
+- 每日提醒在 **设置与帮助 → 今日用量提醒** 中自选，按新加坡时间统计，达到官方计数加可见文本估算阈值时提示，不阻止翻译；未返回的用量无法计入，提醒不等于账单或订阅余额。
 
 ## 安装（Apple 芯片 Mac）
 
@@ -33,7 +35,9 @@
 4. 打开扩展 → **账号与设置**，登录自己的 ChatGPT 或 Antigravity。ChatGPT 通道需要本机安装并登录官方 Codex/ChatGPT 组件；Antigravity 可通过包内 **安装Antigravity.command** 获取官方 ACP 组件，再本人完成 Google 登录。
 5. 打开英文新闻或带英文字幕的 YouTube 视频，按 **Option＋E**。
 
-助手按需启动，不设置开机自启。面板中的 **翻译服务** 开关可停止服务。**重新连接**修复本机配对，**检查安装**查看环境；再次运行安装器可保留数据修复。
+助手按需启动，不设置开机自启。面板顶部的 **翻译服务** 开关可停止服务。**设置与帮助** 中的 **重新连接** 修复本机配对，**检查安装** 查看环境；再次运行安装器可保留数据修复。
+
+更新时，设置里的 **查看最新版本** 会打开 GitHub；自行下载并运行新版 **安装与修复.command** 后，再点 **重新加载插件**。重新加载不会自动下载或安装更新，当前版本也不会后台静默联网检查更新。账号、缓存和用量记录会保留。
 
 这是未签名公证的测试安装包，目前未上架 Chrome 商店。若系统阻止打开，请先核对发布来源及文件摘要，依照系统正常的用户确认流程处理；不要关闭系统安全保护。公司受管浏览器可能禁止开发者模式或 Native Messaging。
 
@@ -65,7 +69,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-浏览器测试另需 `requirements-dev.txt` 与 Playwright Chromium；`tests/browser_smoke.py`、`tests/sites_smoke.py`、`tests/recovery_smoke.py` 使用隔离配置与模拟翻译，不消耗真实账号额度。`tests/distribution_smoke.py` 面向完整离线安装包，在隔离数据目录验证首次安装、Native Messaging、修复、目录移动和可恢复卸载。
+浏览器测试另需 `requirements-dev.txt` 与 Playwright Chromium；`tests/browser_smoke.py`、`tests/sites_smoke.py`、`tests/recovery_smoke.py`、`tests/experience_smoke.py` 使用隔离配置与模拟翻译，不消耗真实账号额度。`tests/distribution_smoke.py` 面向完整离线安装包，在隔离数据目录验证首次安装、Native Messaging、修复、目录移动和可恢复卸载。
 
 ```sh
 python build_release.py --assets /path/to/verified-distribution-assets

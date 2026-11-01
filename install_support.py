@@ -2,7 +2,7 @@
 import base64,hashlib,json,os,re,shutil
 from pathlib import Path
 
-VERSION='0.6.0'
+VERSION='0.7.0'
 NAME='local.chatgpt_web_translator'
 DEFAULT_DATA=Path.home()/'Library/Application Support/NewsBridge'
 DEFAULT_HOSTS=Path.home()/'Library/Application Support/Google/Chrome/NativeMessagingHosts'

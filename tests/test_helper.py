@@ -105,6 +105,24 @@ class FlowTests(unittest.TestCase):
         self.assertFalse(state['results'])
         self.assertEqual(self.app.usage.summary()['today']['total'],120)
 
+    def test_usage_sessions_are_isolated_and_identity_validated(self):
+        self.app.models=lambda *args:[{'slug':'test'}]
+        def infer(*args,**kw):
+            kw['on_usage']({'input':90,'output':30,'total':120,'cached':0,'reasoning':0})
+            return ['译文']
+        self.app.infer=infer
+        session='a'*32;page='b'*64;request='c'*32
+        payload={'title':'Session test','paragraphs':['A unique English article'],'model':'test','pageKey':page,'sessionId':session,'requestId':request}
+        self.wait_job(self.app.start_job(payload))
+        self.assertEqual(self.app.usage.summary(page,session_id=session)['session']['total'],120)
+        self.assertEqual(self.app.usage.summary(page,session_id='d'*32)['session']['total'],0)
+        with self.assertRaises(helper.AppError):self.app.start_job({**payload,'sessionId':'d'*32})
+        with self.assertRaises(helper.AppError):self.app.start_job({**payload,'sessionId':'invalid'})
+        # A second session hits the existing translation cache and incurs no new model usage.
+        self.wait_job(self.app.start_job({**payload,'sessionId':'d'*32,'requestId':'e'*32}))
+        self.assertEqual(self.app.usage.summary(page,session_id='d'*32)['session']['total'],0)
+        self.assertEqual(self.app.usage.summary(page)['page']['total'],120)
+
     def wait_job(self, identifier):
         for _ in range(200):
             state=self.app.snapshot(identifier)
