@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "双语翻译器",
+  "description": "使用你授权的 ChatGPT 或 Antigravity，将新闻和 YouTube 显示为中英双语。",
+  "version": "0.5.1",
+  "minimum_chrome_version": "114",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "translate-page": {
+      "suggested_key": {
+        "default": "Alt+E",
+        "mac": "Option+E"
+      },
+      "description": "翻译当前新闻网页或 YouTube 视频"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "双语翻译器",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
