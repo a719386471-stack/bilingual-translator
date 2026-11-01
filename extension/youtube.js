@@ -5,7 +5,7 @@
   let dragging=false,suppressClick=null,finishDrag=null,retryButton;
   let batchSerial=0,pendingRange=null,latency=6,hasWindow=false,suspended=false,failedStart=0;
   let playerResize = null, resizeFrame = null;
-  let fontScale=100;
+  let fontScale=100, nativeCount=0;
   const validScale=value=>Math.max(50,Math.min(200,Number(value)||100));
   let cues = [], translated = new Map(), annotations = [], loading = false, model, provider, currentVideo = '';
   const text = el => el?.textContent?.replace(/\s+/g,' ').trim() || '';
@@ -36,7 +36,7 @@
     job=null;overlay?.remove();overlay=null;
     document.querySelectorAll('#cgpt-youtube-subtitles,.cgpt-transcript-translation').forEach(node=>node.remove());
     annotations.forEach(n=>n.remove());annotations=[];
-    cues=[];translated.clear();
+    cues=[];translated.clear();nativeCount=0;
   }
   function resizeOverlay() {
     resizeFrame=null;
@@ -55,6 +55,7 @@
   function makeOverlay() {
     overlay=document.createElement('div');overlay.id='cgpt-youtube-subtitles';
     overlay.dataset.resizeProtocol='pointer-v2';overlay.dataset.bufferProtocol='adaptive-v1';
+    overlay.dataset.captionSource=nativeCount?(nativeCount===cues.length?'manual-chinese':'manual-chinese-and-ai'):'ai';
     overlay.style.cssText='position:absolute;left:8%;right:8%;bottom:70px;z-index:65;text-align:center;pointer-events:none;';
     const shadow=overlay.attachShadow({mode:'closed'});
     const style=document.createElement('style');style.textContent=`
@@ -78,6 +79,7 @@
     shell=document.createElement('div');shell.id='caption-box';shell.title='移到字幕上，拖动角点调整大小';
     source=document.createElement('div');source.className='line original';
     target=document.createElement('div');target.className='line translated';
+    target.title=nativeCount?'视频原有人工中文字幕；未覆盖部分使用所选 AI 翻译':'所选 AI 翻译';
     const tools=document.createElement('div');tools.className='tools';
     label=document.createElement('span');
     const off=document.createElement('button');off.textContent='关闭翻译';off.onclick=e=>{e.stopPropagation();stop();};
@@ -143,6 +145,26 @@
     // Do not leave the final line on screen after its unknown end time.
     return i>=0 && time < (cues[i].end ?? (cues[i+1]?.start ?? cues[i].start+8)) ? i : -1;
   }
+  function annotateCue(i,value) {
+    if(!cues[i].el?.isConnected)return;
+    const node=document.createElement('div');node.className='cgpt-transcript-translation';node.textContent=value;node.lang='zh-CN';
+    node.style.cssText='color:var(--yt-spec-text-secondary,#aaa);font:14px/1.6 sans-serif;padding:4px 12px 9px;white-space:pre-wrap;';
+    cues[i].el.after(node);annotations.push(node);
+  }
+  function sourceLabel() {
+    return nativeCount?(nativeCount===cues.length?'字幕来源：视频原有人工中文字幕':'字幕来源：人工中文字幕＋AI 补译'):'字幕来源：所选 AI';
+  }
+  function contextFor(indices) {
+    const first=indices[0],last=indices.at(-1);
+    const contextBefore=[];
+    for(let i=Math.max(0,first-3);i<first;i++){
+      const en=cues[i].text,zh=translated.get(i);
+      // At most 600 characters per pair, 1800 for the side. Missing zh is omitted.
+      contextBefore.push(zh?{en:en.slice(0,300),zh:zh.slice(0,300)}:{en:en.slice(0,600)});
+    }
+    const contextAfter=cues.slice(last+1,last+4).map(c=>c.text.slice(0,600));
+    return {contextBefore,contextAfter,cueIds:indices};
+  }
   async function loadBatch(start,epoch) {
     const token=++batchSerial;loading=true;
     const valid=()=>epoch===run&&token===batchSerial&&active;
@@ -160,20 +182,16 @@
     try{
       if(!indices.length)return;
       label.textContent=hasWindow?'正在准备后续字幕…':'正在翻译当前字幕…';
-      await globalThis.__cgptBridge.run({title:document.title,model,provider,kind:'captions',paragraphs:indices.map(i=>cues[i].text)},{
+      await globalThis.__cgptBridge.run({title:document.title,model,provider,kind:'captions',paragraphs:indices.map(i=>cues[i].text),...contextFor(indices)},{
         cancelled:()=>!valid(),id:id=>{if(valid())job=id;},notice:message=>{if(valid())label.textContent=message;},
         update:state=>{
           if(!valid())return;
           for(const [k,value]of Object.entries(state.results)){
             const i=indices[Number(k)];if(i===undefined||translated.has(i))continue;
             translated.set(i,value);
-            if(cues[i].el?.isConnected){
-              const node=document.createElement('div');node.className='cgpt-transcript-translation';node.textContent=value;node.lang='zh-CN';
-              node.style.cssText='color:var(--yt-spec-text-secondary,#aaa);font:14px/1.6 sans-serif;padding:4px 12px 9px;white-space:pre-wrap;';
-              cues[i].el.after(node);annotations.push(node);
-            }
+            annotateCue(i,value);
           }
-          label.textContent=`字幕翻译 · 已就绪 ${translated.size} / ${cues.length} 条`;
+          label.textContent=`${sourceLabel()} · 已就绪 ${translated.size} / ${cues.length} 条`;
         }
       });
       if(valid()){latency=Math.max(2,Math.min(45,latency*.5+(performance.now()-began)/2000));hasWindow=true;}
@@ -231,13 +249,23 @@
         if(transcriptError?.retryable){
           const data=await globalThis.__cgptBridge.request('transcript',{videoId:currentVideo},null,{cancelled:()=>epoch!==run});
           if(epoch!==run)return;
-          cues=data.cues.map(c=>({el:null,start:c.start,end:c.start+c.duration,text:c.text}));
+          canonical=data;cues=data.cues.map(c=>({el:null,start:c.start,end:c.start+c.duration,text:c.text}));
         }else throw transcriptError||new Error('没有找到公开英文字幕，请尝试打开网页转录文稿。');
       }
     }
     const sample=cues.slice(0,20).map(c=>c.text).join('');
     if((sample.match(/[a-z]/gi)||[]).length<(sample.match(/[\u3400-\u9fff]/g)||[]).length)throw new Error('请将转录文稿语言切换为英文后重试。');
-    active=true;makeOverlay();label.textContent='正在准备英文字幕翻译…';timer=setInterval(tick,350);tick();
+    // Manual Chinese is already a translation: reuse it without a model request.
+    const native=canonical?.nativeChinese;
+    if(native?.source==='manual'&&Array.isArray(native.translations)&&native.translations.length===cues.length){
+      native.translations.forEach((value,i)=>{
+        if(typeof value==='string'&&value.trim()&&/[\u3400-\u9fff]/.test(value)){
+          translated.set(i,value);nativeCount++;annotateCue(i,value);
+        }
+      });
+    }
+    hasWindow=nativeCount>0;
+    active=true;makeOverlay();label.textContent=sourceLabel()+' · 已就绪 '+translated.size+' / '+cues.length+' 条';timer=setInterval(tick,350);tick();
   }
   chrome.runtime.onMessage.addListener((m,s,reply)=>{
     if(s.id!==chrome.runtime.id)return;

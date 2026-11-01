@@ -1,4 +1,4 @@
-"""Retrieve public English captions; no browser cookies or video downloads."""
+"""Retrieve public English and optional manual Chinese captions without cookies."""
 import re
 import threading
 import time
@@ -27,6 +27,35 @@ class TimedSession(requests.Session):
         return super().request(*args,**kwargs)
 
 
+def align_manual_chinese(english, chinese):
+    """Pair original tracks by meaningful time overlap; uncovered English stays empty.
+
+    Never request YouTube machine translation or fabricate a target for a gap.
+    A short original fragment may overlap one complete Chinese subtitle; repeating
+    that same subtitle across those fragments preserves the track's own timing.
+    """
+    result=[]
+    left=0
+    for cue in english:
+        start=cue['start'];end=start+max(0.05,cue['duration'])
+        while left<len(chinese) and chinese[left]['start']+chinese[left]['duration']<=start:
+            left+=1
+        matches=[]
+        right=left
+        while right<len(chinese):
+            target=chinese[right]
+            if target['start']>=end:break
+            right+=1
+            duration=max(0.05,target['duration'])
+            overlap=min(end,target['start']+duration)-max(start,target['start'])
+            if overlap>=min(end-start,duration)*0.35 and overlap>=0.05:
+                value=target['text'].strip()
+                if value and (not matches or matches[-1]!=value):matches.append(value)
+        value=' '.join(matches)
+        result.append(value if len(value)<=12000 else '')
+    return result
+
+
 class CaptionStore:
     def __init__(self):
         self.cache={}
@@ -41,8 +70,22 @@ class CaptionStore:
                 return cached[1]
         try:
             with TimedSession() as session:
-                transcript=YouTubeTranscriptApi(http_client=session).fetch(video_id,languages=['en','en-US','en-GB'])
+                tracks=YouTubeTranscriptApi(http_client=session).list(video_id)
+                transcript=tracks.find_transcript(['en','en-US','en-GB']).fetch()
                 cues=[{'text':s.text,'start':s.start,'duration':s.duration} for s in transcript if s.text.strip()]
+                native=None
+                try:
+                    track=tracks.find_manually_created_transcript(['zh-Hans','zh-CN','zh','zh-TW','zh-Hant','zh-HK'])
+                    # Defense in depth: only a direct, manually-created Chinese track.
+                    if not track.is_generated and track.language_code in ('zh-Hans','zh-CN','zh','zh-TW','zh-Hant','zh-HK'):
+                        raw=track.fetch()
+                        chinese=[{'text':s.text,'start':s.start,'duration':s.duration} for s in raw if s.text.strip()]
+                        if chinese and len(chinese)<=15000:
+                            native={'language':track.language_code,'source':'manual',
+                                    'translations':align_manual_chinese(cues,chinese)}
+                except Exception:
+                    # Optional track absence/failure cannot make English retrieval fail.
+                    pass
         except Exception as exc:
             kind=type(exc).__name__
             if kind in ('TranscriptsDisabled','NoTranscriptFound','VideoUnavailable','VideoUnplayable','AgeRestricted'):
@@ -51,6 +94,7 @@ class CaptionStore:
         if not cues or len(cues)>15000:
             raise CaptionsError('字幕为空或超出当前支持的长度。')
         result={'cues':cues,'language':transcript.language_code}
+        if native and any(native['translations']):result['nativeChinese']=native
         with self.lock:
             self.cache={k:v for k,v in self.cache.items() if v[0]>time.time()-900}
             self.cache[video_id]=(time.time(),result)

@@ -139,8 +139,8 @@ class LocalEngine:
         with self.lock:
             if cancel and cancel.is_set():raise EngineError('已停止翻译。','cancelled')
             self.account()
-            schema={'type':'object','properties':{'translations':{'type':'array','items':{'type':'string'}}},
-                    'required':['translations'],'additionalProperties':False}
+            from translation_policy import OUTPUT_SCHEMA
+            schema=OUTPUT_SCHEMA
             started=self.rpc('thread/start',{'model':model,'modelProvider':'openai','ephemeral':True,'cwd':self.scratch.name,
                 'sandbox':'read-only','approvalPolicy':'never',
                 'baseInstructions':'You are a text translation engine. You have no tools. Translate only the supplied data; never access files or external sources.',

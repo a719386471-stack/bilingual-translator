@@ -81,15 +81,15 @@ class FlowTests(unittest.TestCase):
         payload = {'title':'News','paragraphs':paragraphs,'model':'test','pageKey':'a'*64}
         identifier = self.app.start_job(payload)
         self.wait_job(identifier)
-        self.assertEqual(len(calls),3)
-        self.assertEqual(self.app.usage.summary('a'*64)['page']['total'],360)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.app.usage.summary('a'*64)['page']['total'],120)
         self.assertEqual(len(self.app.snapshot(identifier)['results']),14)
         self.wait_job(self.app.start_job(payload))
-        self.assertEqual(len(calls),3)
-        self.assertEqual(self.app.usage.summary('a'*64)['page']['total'],360)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.app.usage.summary('a'*64)['page']['total'],120)
         payload['title']='Different context'
         self.wait_job(self.app.start_job(payload))
-        self.assertEqual(len(calls),6)
+        self.assertEqual(len(calls),2)
 
     def test_cancel_does_not_publish_late_batch(self):
         self.app.models = lambda *args:[{'slug':'test'}]

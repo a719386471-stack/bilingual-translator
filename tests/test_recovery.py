@@ -9,7 +9,7 @@ class RecoveryTests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.app=helper.App(self.tmp.name)
   self.app.models=lambda *args:[{'slug':'test'}]
   self.app.retry_wait=lambda job,seconds:job['cancel'].is_set()
-  self.paras=['English paragraph number %d, with context and complete sentences.'%i for i in range(14)]
+  self.paras=[('English paragraph number %d, with context and complete sentences.'%i).ljust(1300,'x') for i in range(14)]
   self.payload={'title':'Recovery test','paragraphs':self.paras,'model':'test','pageKey':'a'*64,'requestId':'1'*32}
  def tearDown(self):
   self.app.pool.shutdown();self.app.local_engine.close(cleanup=True);self.app.antigravity.close(cleanup=True);self.tmp.cleanup()
@@ -62,9 +62,9 @@ class RecoveryTests(unittest.TestCase):
   def infer(title,paras,*args,**kw):calls.append(paras);return ['中文']*len(paras)
   self.app.infer=infer
   cues=['English caption number %d for window reuse.'%i for i in range(40)]
-  payload={**self.payload,'kind':'captions','paragraphs':cues[:24]}
+  payload={**self.payload,'kind':'captions','paragraphs':cues[:24],'cueIds':list(range(24))}
   self.assertEqual(self.wait(self.app.start_job(payload))['status'],'done');self.assertEqual(len(calls),1)
-  self.wait(self.app.start_job({**payload,'requestId':'2'*32,'paragraphs':cues[12:36]}))
+  self.wait(self.app.start_job({**payload,'requestId':'2'*32,'paragraphs':cues[12:36],'cueIds':list(range(12,36))}))
   self.assertEqual(len(calls),2);self.assertEqual(calls[1],cues[24:36])
   # Reopening after a helper restart uses the same SQLite cache without asking the model catalog.
   self.app.jobs.clear();self.app.models=lambda *args:(_ for _ in ()).throw(AssertionError('cache must work offline'))

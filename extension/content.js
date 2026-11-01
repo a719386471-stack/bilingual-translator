@@ -9,25 +9,74 @@
     return s.display !== 'none' && s.visibility !== 'hidden' && el.getClientRects().length > 0;
   };
   const wsjHome = () => /(^|\.)wsj\.com$/.test(location.hostname) && /^\/(?:news\/?)?$/.test(location.pathname);
-  function collect() {
-    if(wsjHome()){
-      const root=document.querySelector('main,[role="main"]')||document.body;
-      // Homepage headlines are links, and visible card summaries are aria-hidden
-      // to avoid duplicate screen-reader links. Neither means visually hidden.
-      const cards=[...root.querySelectorAll('[data-testid="flexcard-headline"],[data-testid="flexcard-text"]')];
-      return cards.map(node=>{
-        const headline=node.matches('[data-testid="flexcard-headline"]');
-        const el=headline?(node.closest('h1,h2,h3')||node):node;
-        return {el,text:textOf(el),insertAfter:headline?el:(el.closest('a')||el)};
-      }).filter(({el,text})=>visible(el)&&!el.closest('nav,footer,[role="navigation"],[role="dialog"],[data-testid="advertisement"],[class*="newsletter"]')&&
-        text.length>=6&&text.length<12000&&(text.match(/[a-zA-Z]/g)||[]).length>(text.match(/[\u3400-\u9fff]/g)||[]).length*2);
+  const feedExcluded = 'nav,footer,form,button,[role="navigation"],[role="dialog"],[contenteditable="true"],.nb-translation,time,[class*="Byline"],[class*="byline"],[data-testid="Byline"],[data-testid="AuthorName"],[data-testid="Author"],[data-testid="Timestamp"],[data-testid="advertisement"],[class*="newsletter"]';
+  const articleSelectors = () => /(^|\.)reuters\.com$/.test(location.hostname)
+    ? '[data-testid="ArticleBody"],[data-testid="article-body"],[class*="article-body__content"]'
+    : /(^|\.)wsj\.com$/.test(location.hostname) ? '.article-content,.articleBody,[data-type="article-body"],[class*="articleBody"]' : '';
+  function storyURL(anchor, loose = false) {
+    if (!anchor?.getAttribute('href')) return '';
+    try {
+      const url = new URL(anchor.getAttribute('href'), location.href);
+      if (!/^https?:$/.test(url.protocol) || url.hostname.replace(/^www\./,'') !== location.hostname.replace(/^www\./,'')) return '';
+      if (url.pathname === '/' || url.pathname === location.pathname) return '';
+      if (/(^|\.)reuters\.com$/.test(location.hostname) && !loose && !(/-\d{4}-\d{2}-\d{2}\/?$/.test(url.pathname) || /\/(article|graphics)\//.test(url.pathname))) return '';
+      url.search = ''; url.hash = '';
+      return url.href.slice(0, 1000);
+    } catch { return ''; }
+  }
+  function storyGroup(el, root, loose = false) {
+    const direct = storyURL(el.closest('a[href]'), loose);
+    if (direct) return 'story:' + direct;
+    // Stop before the first ancestor spanning multiple stories. A summary with
+    // no unambiguous card never inherits whichever headline happens to precede it.
+    for (let node = el; node && node !== root; node = node.parentElement) {
+      const urls = [...new Set([...node.querySelectorAll('a[href]')].map(a => storyURL(a,loose)).filter(Boolean))];
+      if (urls.length === 1) return 'story:' + urls[0];
+      if (urls.length > 1) break;
     }
+    return '';
+  }
+  function textFingerprint(text) {
+    let hash=2166136261;
+    for (const character of text) hash=Math.imul(hash^character.charCodeAt(0),16777619);
+    return (hash>>>0).toString(36);
+  }
+  function readableFeedEntry({el,text}) {
+    return visible(el) && !el.closest(feedExcluded) && text.length >= 6 && text.length < 12000 &&
+      (text.match(/[a-zA-Z]/g)||[]).length > (text.match(/[\u3400-\u9fff]/g)||[]).length*2;
+  }
+  function collectFeed(root, wsj = false) {
+    let elements;
+    if (wsj) elements = [...root.querySelectorAll('[data-testid="flexcard-headline"],[data-testid="flexcard-text"]')].map(node => {
+      const headline=node.matches('[data-testid="flexcard-headline"]');
+      const el=headline?(node.closest('h1,h2,h3')||node):node;
+      return {el, text:textOf(el), insertAfter:headline?el:(el.closest('a')||el)};
+    });
+    else {
+      const headlines = [...root.querySelectorAll('h1 a[href],h2 a[href],h3 a[href],h4 a[href],a[data-testid="Heading"],a[data-testid="Title"],[data-testid="Heading"] a[href],[data-testid="Title"] a[href]')]
+        .filter(a => storyURL(a)).map(a => a.closest('h1,h2,h3,h4') || a);
+      // Descriptions vary by layout, but only text inside a single-story card
+      // qualifies. Section introductions and unrelated paragraphs are excluded.
+      const summaries = [...root.querySelectorAll('p,[data-testid="Description"],[data-testid="description"],[data-testid="CardDescription"]')]
+        .filter(el => !el.querySelector('p') && storyGroup(el,root));
+      elements = [...new Set([...headlines,...summaries])].sort((a,b) => a === b ? 0 : a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+        .map(el => ({el,text:textOf(el),insertAfter:el.closest('a')||el}));
+    }
+    return elements.filter(readableFeedEntry).map((entry,index) => ({...entry,
+      group:storyGroup(entry.el,root,wsj) || 'unlinked-card:' + index + ':' + textFingerprint(entry.text)}));
+  }
+  function collect() {
     const site = location.hostname;
-    const siteSelectors = /(^|\.)reuters\.com$/.test(site)
-      ? '[data-testid="ArticleBody"],[data-testid="article-body"],[class*="article-body__content"]'
-      : /(^|\.)wsj\.com$/.test(site) ? '.article-content,.articleBody,[data-type="article-body"],[class*="articleBody"]' : '';
-    const specific = siteSelectors ? [...document.querySelectorAll(siteSelectors)].filter(visible) : [];
+    const selector = articleSelectors();
+    const specific = selector ? [...document.querySelectorAll(selector)].filter(visible) : [];
     const articles = [...document.querySelectorAll('article,[itemprop="articleBody"]')].filter(visible);
+    const main = document.querySelector('main,[role="main"]') || document.body;
+    const hasArticleMetadata = document.querySelector('meta[property="og:type"][content="article"],[itemprop="articleBody"],[itemtype$="/NewsArticle"],[itemtype$="/Article"]');
+    const reutersDatedArticle = /(^|\.)reuters\.com$/.test(site) && /-\d{4}-\d{2}-\d{2}\/?$/.test(location.pathname);
+    const singleArticle = articles.length === 1 && (articles[0].querySelector('h1') || [...articles[0].querySelectorAll('p')].filter(p => textOf(p).length >= 15).length >= 2);
+    const storyLinks = [...new Set([...main.querySelectorAll('h1 a[href],h2 a[href],h3 a[href],h4 a[href],a[data-testid="Heading"],a[data-testid="Title"]')].map(a => storyURL(a)).filter(Boolean))];
+    if (wsjHome()) return collectFeed(main,true);
+    if (!specific.length && !hasArticleMetadata && !reutersDatedArticle && !singleArticle && storyLinks.length >= 2) return collectFeed(main);
     const roots = specific.length ? specific : articles.length ? articles : [...document.querySelectorAll('main,[role="main"]')].filter(visible);
     const score = el => [...el.querySelectorAll('p')].filter(p => !p.closest(excluded)).reduce((n,p) => n + textOf(p).length, 0);
     const root = roots.sort((a,b) => score(b)-score(a))[0] || document.body;
@@ -35,16 +84,14 @@
     const headings = [document.querySelector('h1')];
     if (/(^|\.)wsj\.com$/.test(site)) headings.push(document.querySelector('h2'));
     for (const heading of headings.reverse()) if (heading && !root.contains(heading)) elements.unshift(heading);
-    // Avoid translating both a blockquote/list parent and its contained paragraphs.
     elements = [...new Set(elements)].filter(el => !el.querySelector('p,li,blockquote,[data-testid^="paragraph-"]') && !el.closest(excluded+',time,[class*="Byline"],[class*="byline"],[data-testid="RelatedContent"],[class*="related-content"],[class*="newsletter"],.paywall-prompt,[data-testid="paywall-message"],[data-testid="advertisement"]') && visible(el));
-    const entries = elements.map(el => ({el, text: textOf(el)})).filter(({el,text}) => {
+    return elements.map(el => ({el,text:textOf(el),group:'article'})).filter(({el,text}) => {
       if (text.length < (/^H[123]$/.test(el.tagName) ? 6 : 15) || text.length > 12000) return false;
       const latin = (text.match(/[a-zA-Z]/g) || []).length;
       const han = (text.match(/[\u3400-\u9fff]/g) || []).length;
       const links = [...el.querySelectorAll('a')].reduce((n,a)=>n+textOf(a).length,0);
       return latin >= 5 && latin > han * 2 && links / text.length < .75;
     });
-    return entries;
   }
   const api=(...args)=>globalThis.__cgptBridge.raw(...args);
   function status(message, isError = false, retry = null) {
@@ -86,7 +133,7 @@
   async function translate(model, entries, run,provider) {
     try {
       const done = new Set(entries.map((e,i)=>(e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')?String(i):null).filter(x=>x!==null));
-      await globalThis.__cgptBridge.run({model,provider,kind:'news',title:document.title,paragraphs:entries.map(e=>e.text)},{
+      await globalThis.__cgptBridge.run({model,provider,kind:'news',newsMode:entries.every(e=>e.group==='article')?'article':'feed',groups:entries.map(e=>e.group),title:document.title,paragraphs:entries.map(e=>e.text)},{
         cancelled:()=>run!==generation,id:id=>{job=id;},notice:message=>{if(run===generation)status(message);},
         update:state=>{
         if(run!==generation)return;
@@ -95,7 +142,7 @@
           let entry = entries[Number(index)];
           if (!entry) continue;
           if (!entry.el.isConnected || textOf(entry.el) !== entry.text) {
-            const fresh=collect().find(e=>e.text===entry.text&&!((e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')));
+            const fresh=collect().find(e=>e.group===entry.group&&e.text===entry.text&&!((e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')));
             if(!fresh)continue;
             entry=entries[Number(index)]=fresh;
           }

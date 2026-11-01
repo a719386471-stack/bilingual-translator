@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory() as tmp:
    assert result['ok'],result
    return id
   url='https://www.reuters.com/recovery-test/'
-  body='<h1>Recovery article for network testing</h1><div data-testid="ArticleBody">'+''.join('<p>Recovery paragraph number %d has several complete English sentences for testing.</p>'%i for i in range(18))+'</div>'
+  body='<h1>Recovery article for network testing</h1><div data-testid="ArticleBody">'+''.join('<p>'+('Recovery paragraph number %d has several complete English sentences for testing.'%i).ljust(1400,'x')+'</p>' for i in range(18))+'</div>'
   page.route(url,lambda r:r.fulfill(content_type='text/html',body=body));page.goto(url);tab=start()
   expect(page.locator('.nb-translation')).to_have_count(19,timeout=25000)
   assert FaultHandler.dropped_post and FaultHandler.dropped_poll and FaultHandler.forgotten
@@ -63,13 +63,13 @@ with tempfile.TemporaryDirectory() as tmp:
   worker.evaluate('id=>chrome.tabs.sendMessage(id,{action:"restore"})',tab)
   # A hard quota error pauses once; the visible Continue button retries only missing paragraphs.
   calls.clear();quota=True
-  page.route('https://www.reuters.com/quota-test/',lambda r:r.fulfill(content_type='text/html',body='<div data-testid="ArticleBody">'+''.join('<p>Recovery paragraph number %d has different content for a quota test.</p>'%i for i in range(12))+'</div>'))
+  page.route('https://www.reuters.com/quota-test/',lambda r:r.fulfill(content_type='text/html',body='<div data-testid="ArticleBody">'+''.join('<p>'+('Recovery paragraph number %d has different content for a quota test.'%i).ljust(1300,'x')+'</p>' for i in range(14))+'</div>'))
   page.goto('https://www.reuters.com/quota-test/');tab=start()
   expect(page.locator('.nb-translation')).to_have_count(6,timeout=10000)
   again=page.get_by_role('button',name='继续翻译');expect(again).to_be_visible(timeout=10000)
   assert len(calls)==2,calls
-  quota=False;again.click();expect(page.locator('.nb-translation')).to_have_count(12,timeout=10000)
-  assert len(calls)==3,calls
+  quota=False;again.click();expect(page.locator('.nb-translation')).to_have_count(14,timeout=10000)
+  assert len(calls)==4,calls
   assert sum(p[0].startswith('Recovery paragraph number 0 ') for p in calls)==1
   worker.evaluate('id=>chrome.tabs.sendMessage(id,{action:"restore"})',tab)
   calls.clear()
