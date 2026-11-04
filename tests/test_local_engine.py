@@ -25,6 +25,7 @@ class LocalEngineTests(unittest.TestCase):
 
     def test_ephemeral_translation_completion(self):
         self.engine.account=lambda:{'type':'chatgpt'}
+        self.engine.reasoning_options={'test':{'low','high'}}
         calls=[]
         def rpc(method,params,**kwargs):
             calls.append((method,params))
@@ -45,6 +46,7 @@ class LocalEngineTests(unittest.TestCase):
         self.assertEqual(calls[0][1]['sandbox'],'read-only')
         self.assertEqual(calls[0][1]['approvalPolicy'],'never')
         self.assertEqual(calls[-1][0],'thread/unsubscribe')
+        self.assertEqual(next(params for method,params in calls if method=='turn/start')['effort'],'low')
 
     def test_unexpected_tools_are_not_accepted_as_translation(self):
         self.engine.account=lambda:{'type':'chatgpt'}
@@ -56,6 +58,24 @@ class LocalEngineTests(unittest.TestCase):
         self.engine.rpc=rpc
         with self.assertRaises(EngineError):
             self.engine.translate('Translate only.',{'paragraphs':['English']},'test')
+
+    def test_caption_delta_is_delivered_before_turn_completion(self):
+        self.engine.account=lambda:{'type':'chatgpt'}
+        seen=[];schemas=[]
+        def rpc(method,params,**kwargs):
+            if method=='thread/start':return {'thread':{'id':'stream-thread'}}
+            if method=='turn/start':
+                schemas.append(params['outputSchema'])
+                for chunk in ['{"translations":{"7":"看见。",','"8":"我能问一下吗？"}}']:
+                    self.engine.events.put({'method':'item/agentMessage/delta','params':{'threadId':'stream-thread','itemId':'m','delta':chunk}})
+                self.engine.events.put({'method':'item/completed','params':{'threadId':'stream-thread','item':{'id':'m','type':'agentMessage','text':'{"translations":{"7":"看见。","8":"我能问一下吗？"}}'}}})
+                self.engine.events.put({'method':'turn/completed','params':{'threadId':'stream-thread','turn':{'status':'completed'}}})
+            return {}
+        self.engine.rpc=rpc
+        result=self.engine.translate('Translate.',{'segments':[{'id':'7','text':'to see.'},{'id':'8','text':'Can I ask?'}]},'test',on_text=seen.append)
+        self.assertEqual(seen[0],'{"translations":{"7":"看见。",')
+        self.assertEqual(seen[-1],result)
+        self.assertEqual(schemas[0]['properties']['translations']['required'],['7','8'])
 
     def test_cancel_interrupts_the_actual_turn_before_unsubscribe(self):
         cancel=threading.Event();calls=[]

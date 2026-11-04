@@ -20,6 +20,52 @@ OUTPUT_SCHEMA={'type':'object','properties':{
  'terms':{'type':'array','items':{'type':'object','properties':{k:{'type':'string'} for k in ('source','target','sense')},'required':['source','target','sense'],'additionalProperties':False}}},
  'required':['translations','overview','terms'],'additionalProperties':False}
 
+CAPTION_RULES=(BASE_RULES.split('只返回JSON：')[0]+
+ 'segments是按播放时间切分的字幕片段，每个id必须独立对应其text。只翻译该id内的词语，'
+ '即使片段不是完整句子，也不要把相邻id或参考语境的内容移入本条；不要先合并整段再重新分配译文。'
+ '每一条都必须独立、完整地覆盖它自己的全部text；宁可保留不完整短语，也不要跨id补齐句子。'
+ '例如id5是"right after ChatGPT"、id6是"launched and even before that"，则5只译"就在ChatGPT"，'
+ '6译"发布之后，甚至在那之前"，禁止把6的内容提前放进5。'
+ '同理"one of the highest of any"须在本条译出"在所有……中属于最高之一"，不能挪给下一条的"country"。'
+ '保留片段边界和说话人标记。previous_context和following_context仅帮助理解，不属于待翻译内容。'
+ '只返回JSON对象，唯一字段translations是以原id为键、中文译文为值的对象。'
+ '按segments顺序输出所有id，每个恰好一次，不输出数组、解释、术语表或代码围栏。')
+CAPTION_VERSION=hashlib.sha256(CAPTION_RULES.encode()).hexdigest()[:20]
+
+def output_schema(payload):
+    segments=payload.get('segments')
+    if segments is None:return OUTPUT_SCHEMA
+    keys=[str(s['id']) for s in segments]
+    return {'type':'object','properties':{'translations':{'type':'object',
+        'properties':{str(s['id']):{'type':'string','description':'Translate ALL and ONLY this source fragment; do not move words to another entry: '+s['text']} for s in segments},'required':keys,'additionalProperties':False}},
+        'required':['translations'],'additionalProperties':False}
+
+def partial_captions(raw,ids):
+    """Read only complete keyed strings from an unfinished JSON response."""
+    import re
+    match=re.match(r'^\s*(?:```json\s*)?\{\s*"translations"\s*:\s*\{',raw)
+    if not match:return {}
+    decoder=json.JSONDecoder();pos=match.end();found={};allowed={str(i) for i in ids}
+    while True:
+        try:
+            while pos<len(raw) and raw[pos].isspace():pos+=1
+            key,pos=decoder.raw_decode(raw,pos)
+            while pos<len(raw) and raw[pos].isspace():pos+=1
+            if pos>=len(raw) or raw[pos]!=':':break
+            pos+=1
+            while pos<len(raw) and raw[pos].isspace():pos+=1
+            value,pos=decoder.raw_decode(raw,pos)
+            if not isinstance(key,str) or key not in allowed or key in found:return {}
+            if not isinstance(value,str) or not value.strip() or len(value)>40000:return {}
+            # Require a delimiter, so a partial escape or value is never shown.
+            while pos<len(raw) and raw[pos].isspace():pos+=1
+            if pos>=len(raw) or raw[pos] not in ',}':break
+            found[key]=value
+            if raw[pos]=='}':break
+            pos+=1
+        except (ValueError,TypeError):break
+    return found
+
 def digest(value):return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 def normalize_options(payload,paragraphs):
@@ -32,10 +78,12 @@ def normalize_options(payload,paragraphs):
  if cue_ids is not None and (not isinstance(cue_ids,list) or len(cue_ids)!=len(paragraphs) or any(type(i) is not int or not 0<=i<15000 for i in cue_ids) or len(set(cue_ids))!=len(cue_ids)):
   raise ValueError('字幕位置编号无效。')
  before=payload.get('contextBefore',[]);after=payload.get('contextAfter',[])
+ priority=payload.get('priority',[])
+ if not isinstance(priority,list) or len(priority)>500 or any(type(i) is not int or not 0<=i<len(paragraphs) for i in priority):raise ValueError('首屏位置无效。')
  if not isinstance(before,list) or len(before)>3 or any(not isinstance(x,dict) or set(x)-{'en','zh'} or any(not isinstance(x.get(k,''),str) for k in ('en','zh')) for x in before):raise ValueError('前文格式无效。')
  if not isinstance(after,list) or len(after)>3 or any(not isinstance(x,str) for x in after):raise ValueError('后文格式无效。')
  if sum(len(x.get('en',''))+len(x.get('zh','')) for x in before)>1800 or sum(map(len,after))>1800:raise ValueError('参考上下文过长。')
- return {'newsMode':mode,'groups':groups,'cueIds':cue_ids,'contextBefore':before,'contextAfter':after}
+ return {'newsMode':mode,'groups':groups,'cueIds':cue_ids,'contextBefore':before,'contextAfter':after,'priority':priority}
 
 def scopes(kind,title,paragraphs,page_key,options):
  if kind=='captions':return [page_key or digest([title,paragraphs])]*len(paragraphs)
@@ -50,10 +98,12 @@ def cache_keys(kind,title,paragraphs,page_key,provider,model,options):
   if kind=='captions':position=options['cueIds'][i] if options['cueIds'] is not None else [digest(paragraphs),i]
   elif options['newsMode']=='feed':position=p
   else:position=i
-  result.append(digest([POLICY_VERSION,kind,options['newsMode'] if kind=='news' else '',provider,model,scope[i],position,p]))
+  version=[POLICY_VERSION,CAPTION_VERSION] if kind=='captions' else POLICY_VERSION
+  result.append(digest([version,kind,options['newsMode'] if kind=='news' else '',provider,model,scope[i],position,p]))
  return result
 
 def plan_batches(indices,paragraphs,kind,options):
+    indices=list(indices)
     budget=6500 if kind=='captions' else (FULL_ARTICLE_CHARS if options['newsMode']=='article' and sum(map(len,paragraphs))<=FULL_ARTICLE_CHARS else LONG_BATCH_CHARS)
     cap=32 if kind=='captions' else (500 if budget==FULL_ARTICLE_CHARS else 12)
     units=[[i] for i in indices]
@@ -64,13 +114,24 @@ def plan_batches(indices,paragraphs,kind,options):
         for group in grouped.values():
             if sum(len(paragraphs[i]) for i in group)<=budget and len(group)<=cap:units.append(group)
             else:units.extend([None]+[[i] for i in group]+[None])
+        # Preserve complete story groups and avoid reordering oversized split cards.
+        if None not in units and options.get('priority'):
+            priority=set(options['priority']);units.sort(key=lambda unit:not any(i in priority for i in unit))
+    # At most one smaller leading batch. Short pages remain a single request;
+    # ordinary article batches still receive the complete source in reference.
+    leading=kind=='news' and 0 in indices and len(indices)>4 and (
+        sum(len(paragraphs[i]) for i in indices)>6000 or
+        (options['newsMode']=='feed' and len(indices)>12))
     batch=[];size=0
     for unit in units:
         if unit is None:
             if batch:yield batch;batch=[];size=0
             continue
         chars=sum(len(paragraphs[i]) for i in unit)
-        if batch and (len(batch)+len(unit)>cap or size+chars>budget):yield batch;batch=[];size=0
+        first_cap=4 if options['newsMode']=='feed' else 3
+        small_full=leading and batch and (len(batch)+len(unit)>first_cap or size+chars>2200)
+        if batch and (small_full or len(batch)+len(unit)>cap or size+chars>budget):
+            yield batch;batch=[];size=0;leading=False
         batch.extend(unit);size+=chars
     if batch:yield batch
 
@@ -105,4 +166,7 @@ def build_request(title,paragraphs,previous,reference=None):
  context={'title':title,'previous_context':bounded_previous(previous),'paragraphs':paragraphs,'paragraph_ids':ref.get('paragraph_ids',list(range(len(paragraphs))))}
  for key in ('following_context','overview','terms','story_groups','article_lead','article_context'):
   if ref.get(key):context[key]=ref[key]
+ if mode=='captions':
+  context['segments']=[{'id':str(i),'text':p} for i,p in zip(context.pop('paragraph_ids'),context.pop('paragraphs'))]
+  return CAPTION_RULES,context
  return BASE_RULES+MODES[mode],context

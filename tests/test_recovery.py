@@ -25,24 +25,24 @@ class RecoveryTests(unittest.TestCase):
    nonlocal failed
    calls.append(paras)
    kw['on_usage']({'input':100,'output':20,'total':120,'cached':0,'reasoning':0})
-   if paras[0]==self.paras[6] and not failed:
+   if paras[0]==self.paras[1] and not failed:
     failed=True;raise helper.AppError('网络断开','connection',True)
    return ['中文 '+p for p in paras]
   self.app.infer=infer
   state=self.wait(self.app.start_job(self.payload))
   self.assertEqual(state['status'],'done');self.assertEqual(len(state['results']),14)
-  self.assertEqual([p[0] for p in calls],[self.paras[0],self.paras[6],self.paras[6],self.paras[12]])
-  self.assertEqual(self.app.usage.summary()['today']['total'],480)
+  self.assertEqual([p[0] for p in calls],[self.paras[0],self.paras[1],self.paras[1],self.paras[7],self.paras[13]])
+  self.assertEqual(self.app.usage.summary()['today']['total'],600)
  def test_quota_stops_without_automatic_retry_and_manual_resume_keeps_results(self):
   calls=[];quota=True
   def infer(title,paras,previous,model,**kw):
    calls.append(paras[0])
-   if quota and paras[0]==self.paras[6]:raise helper.AppError('额度不足','quota')
+   if quota and paras[0]==self.paras[1]:raise helper.AppError('额度不足','quota')
    return ['中文']*len(paras)
   self.app.infer=infer
   id=self.app.start_job(self.payload);s=self.wait(id)
   self.assertEqual(s['status'],'error');self.assertFalse(s['retryable']);self.assertEqual(s['errorCode'],'quota')
-  self.assertEqual(len(s['results']),6);self.assertEqual(len(calls),2)
+  self.assertEqual(len(s['results']),1);self.assertEqual(len(calls),2)
   quota=False
   self.assertEqual(self.app.start_job({**self.payload,'resume':True}),id)
   self.assertEqual(len(self.wait(id)['results']),14)
@@ -55,8 +55,8 @@ class RecoveryTests(unittest.TestCase):
   for _ in range(5):self.assertEqual(self.app.start_job(self.payload),id)
   with self.assertRaises(helper.AppError):self.app.start_job({**self.payload,'title':'Different data'})
   gate.set();self.assertEqual(self.wait(id)['status'],'done')
-  self.assertEqual(len(calls),3)
-  self.app.start_job(self.payload);time.sleep(.03);self.assertEqual(len(calls),3)
+  self.assertEqual(len(calls),4)
+  self.app.start_job(self.payload);time.sleep(.03);self.assertEqual(len(calls),4)
  def test_caption_windows_share_cache_and_send_one_model_request_for_24_cues(self):
   calls=[]
   def infer(title,paras,*args,**kw):calls.append(paras);return ['中文']*len(paras)

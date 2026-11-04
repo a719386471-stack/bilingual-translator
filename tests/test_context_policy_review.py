@@ -248,7 +248,7 @@ class ContextPolicyReviewTests(unittest.TestCase):
         state = self.run_job(paragraphs=paragraphs)
         self.assert_done(state)
         self.assertEqual(state['strategy'], 'long_article')
-        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(len(self.calls), 5)  # Smaller first result, then normal long-article batches.
         self.assertEqual(sum(len(c['paragraphs']) for c in self.calls), len(paragraphs))
         self.assertFalse(self.calls[0]['reference'].get('terms'))
         self.assertEqual(self.calls[1]['reference']['terms'][0]['target'], '美联储')

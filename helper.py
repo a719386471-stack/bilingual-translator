@@ -132,13 +132,18 @@ def stream_text(response, on_usage=None):
     return text
 
 
-def parse_translation(text, count):
+def parse_translation(text, count, ids=None):
     text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text.strip())
     try:
         value = json.loads(text)
     except (ValueError, TypeError):
         raise AppError('模型返回的译文格式无效，请重试或切换模型。','format',True) from None
     items = value.get('translations') if isinstance(value, dict) else None
+    if ids is not None:
+        keys=[str(i) for i in ids]
+        if not isinstance(items,dict) or set(items)!=set(keys):
+            raise AppError('译文编号与原字幕未能一一对应，请重试。','format',True)
+        items=[items[key] for key in keys]
     if not isinstance(items, list) or len(items) != count or any(not isinstance(x, str) or not x.strip() or len(x) > 40000 for x in items):
         raise AppError('译文与原文段落未能一一对应，请重试或切换模型。','format',True)
     return items
@@ -159,6 +164,7 @@ class App:
         self.auth_error = ''
         self.auth_stage = 'idle'
         self.catalog = (0, [])
+        self.quota_snapshots = {}
         self.local_engine = LocalEngine()
         self.antigravity = AntigravityEngine(self.data_dir)
         self.caption_store = CaptionStore()
@@ -191,9 +197,23 @@ class App:
         return self.config.get('provider','chatgpt')
 
     def quota(self):
-        if self.provider()=='antigravity':return self.antigravity.quota()
-        if self.config.get('engine')=='local':return self.local_engine.quota()
-        return {'available':False,'scope':'ChatGPT','message':'连接本机 ChatGPT 后可查看对应通道额度。'}
+        provider=self.provider()
+        engine=self.antigravity if provider=='antigravity' else self.local_engine
+        if provider=='chatgpt' and self.config.get('engine')!='local':
+            return {'available':False,'scope':'ChatGPT','message':'连接本机 ChatGPT 后可查看对应通道额度。'}
+        cached=self.quota_snapshots.get(provider)
+        with self.jobs_lock:
+            busy=any(j['status']=='running' and j['provider']==provider for j in self.jobs.values())
+        acquired=False if busy else engine.lock.acquire(blocking=False)
+        if not acquired:
+            return {**(cached or {'available':False,'scope':provider}), 'stale':True,
+                    'message':'翻译进行中，暂不查询额度。'+('显示上次官方结果，完成后可刷新。' if cached else '完成后可点击刷新。')}
+        try:
+            if cached and cached['checkedAt']>time.time()-60:return dict(cached)
+            result={**engine.quota(),'checkedAt':time.time()}
+            self.quota_snapshots[provider]=result
+            return dict(result)
+        finally:engine.lock.release()
 
     def status(self, provider=None):
         provider=provider or self.provider()
@@ -406,8 +426,13 @@ class App:
             return {k:dict(v) if k=='results' else v for k,v in job.items()
                     if k in ('results','status','error','errorCode','retryable','phase','retryAt','attempt','strategy')}
 
-    def infer(self, title, paragraphs, previous, model, on_usage=None,provider=None,cancel=None,reference=None,on_context=None):
+    def infer(self, title, paragraphs, previous, model, on_usage=None,provider=None,cancel=None,reference=None,on_context=None,on_timing=None,on_partial=None):
         prompt,context=policy.build_request(title,paragraphs,previous,reference)
+        ids=[s['id'] for s in context['segments']] if 'segments' in context else None
+        def partial(raw):
+            if ids is not None and on_partial and not (cancel and cancel.is_set()):
+                values=policy.partial_captions(raw,ids)
+                if values:on_partial({i:values[key] for i,key in enumerate(ids) if key in values})
         reported=False
         def report(counts):
             nonlocal reported
@@ -417,17 +442,17 @@ class App:
             if on_usage and not reported:
                 a=estimate_text_tokens(prompt+json.dumps(context,ensure_ascii=False));b=estimate_text_tokens(raw)
                 report({'input':a,'output':b,'total':a+b,'cached':0,'reasoning':0,'estimated':True})
-            result=parse_translation(raw,len(paragraphs))
+            result=parse_translation(raw,len(paragraphs),ids)
             if on_context:
                 clean=re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
                 on_context(policy.metadata(json.loads(clean),'\n'.join(paragraphs)))
             return result
         if (provider or self.provider())=='antigravity':
-            try:return parsed(self.antigravity.translate(prompt,context,model,on_usage=report,cancel=cancel))
+            try:return parsed(self.antigravity.translate(prompt,context,model,on_usage=report,cancel=cancel,on_timing=on_timing,on_text=partial if ids is not None else None))
             except EngineError as exc:raise AppError(str(exc),exc.code,exc.retryable,exc.retry_after) from None
         if self.config.get('engine') == 'local':
             try:
-                return parsed(self.local_engine.translate(prompt, context, model, on_usage=report,cancel=cancel))
+                return parsed(self.local_engine.translate(prompt, context, model, on_usage=report,cancel=cancel,on_timing=on_timing,on_text=partial if ids is not None else None))
             except EngineError as exc:
                 raise AppError(str(exc),exc.code,exc.retryable,exc.retry_after) from None
         payload = {'model':model,'store':False,'stream':True,'input':[
@@ -493,6 +518,8 @@ class App:
                         previous=[{'en':paragraphs[i],'zh':job['results'].get(str(i),'')} for i in range(first) if options['groups'][i]==group][-2:]
                         following=[paragraphs[i] for i in range(last+1,len(paragraphs)) if options['groups'][i]==group][:2]
                 reference={'mode':strategy,'paragraph_ids':batch,'following_context':[x[:600] for x in following][:3]}
+                if kind=='captions' and options['cueIds'] is not None:
+                    reference['paragraph_ids']=[options['cueIds'][i] for i in batch]
                 if strategy=='article' and len(batch)<len(paragraphs):
                     reference['article_context']=[{'id':i,'text':p} for i,p in enumerate(paragraphs) if i not in batch]
                 if strategy in ('long_article','captions'):
@@ -502,6 +529,10 @@ class App:
                         if first and not reference['overview']:reference['article_lead']=paragraphs[0][:700]
                 if strategy=='feed':reference['story_groups']=[policy.digest(options['groups'][i])[:12] for i in batch]
                 batch_key=policy.digest(batch);new_context={}
+                def publish_partial(values):
+                    with self.jobs_lock:
+                        if job['cancel'].is_set():return
+                        for local,value in values.items():job['results'][str(batch[local])]=value
                 def infer_batch():
                     # A paid attempt budget survives frontend resume of this job.
                     count=job['paidAttempts'].get(batch_key,0)
@@ -509,14 +540,24 @@ class App:
                     job['paidAttempts'][batch_key]=count+1
                     rid=uuid.uuid4().hex
                     self.usage.record(rid,job['page_key'],provider=job['provider'],session_id=job['session_id'])
+                    began=time.monotonic();timing={};outcome='error'
                     try:
-                        return self.infer(title,[paragraphs[i] for i in batch],policy.bounded_previous(previous),model,
+                        result=self.infer(title,[paragraphs[i] for i in batch],policy.bounded_previous(previous),model,
                             provider=job['provider'],cancel=job['cancel'],reference=reference,
+                            on_timing=timing.update,
+                            on_partial=publish_partial if kind=='captions' else None,
                             on_context=lambda value:new_context.update(value),
                             on_usage=lambda counts:self.usage.record(rid,job['page_key'],counts,provider=job['provider'],session_id=job['session_id']))
+                        outcome='done';return result
                     except TranslationError as exc:
+                        outcome=exc.code
                         if job['paidAttempts'][batch_key]>=2:raise AppError(str(exc)+'（本批已停止自动重试）',exc.code,False,exc.retry_after) from None
                         raise
+                    finally:
+                        try:
+                            self.usage.record_performance(rid,job['provider'],model,kind,len(batch),
+                                sum(len(paragraphs[i]) for i in batch),round((time.monotonic()-began)*1000),outcome,timing)
+                        except sqlite3.Error:pass  # Measurement failure must not discard a paid translation.
                 translated=attempt_call(infer_batch)
                 if job['cancel'].is_set():break
                 if not isinstance(translated,list) or len(translated)!=len(batch) or any(not isinstance(t,str) or not t.strip() for t in translated):
@@ -629,6 +670,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send({'available':False,'scope':'当前来源','message':'暂时无法读取官方额度，请稍后刷新。'})
             elif path.path == '/api/service':
                 self.send({'service':'chatgpt-web-translator','version':VERSION})
+            elif path.path == '/api/performance':
+                self.send({'recent':self.app.usage.performance()})
             elif path.path == '/api/diagnostics':
                 from diagnostics import collect
                 from install_support import read_json

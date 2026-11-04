@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "双语翻译器",
   "description": "使用你授权的 ChatGPT 或 Antigravity，将新闻和 YouTube 显示为中英双语。",
-  "version": "0.7.3",
+  "version": "0.7.5",
   "minimum_chrome_version": "114",
   "permissions": [
     "activeTab",

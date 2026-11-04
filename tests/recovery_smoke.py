@@ -79,8 +79,8 @@ with tempfile.TemporaryDirectory() as tmp:
   page.route('https://www.youtube.com/fixture.webm',lambda r:r.fulfill(content_type='video/webm',body=media.read_bytes()))
   video='https://www.youtube.com/watch?v=fixturelong'
   page.route(video,lambda r:r.fulfill(content_type='text/html',body='<style>#movie_player{position:relative;width:900px;height:500px}video{width:100%;height:100%}</style><div id="movie_player"><video muted src="data:video/webm;base64,'+base64.b64encode(media.read_bytes()).decode()+'"></video></div>'+cues));page.goto(video)
-  tab=start();expect(page.locator('.cgpt-transcript-translation')).to_have_count(9,timeout=10000)
-  assert len(calls)==1 and len(calls[0])==9,calls
+  tab=start();expect(page.locator('.cgpt-transcript-translation')).to_have_count(35,timeout=10000)
+  assert len(calls)==2 and len(calls[0])==3 and len(calls[1])==32,calls
   # Playback starts: fetch about a minute in one request, rather than fixed six-cue calls.
   page.evaluate('async()=>{const v=document.querySelector("video");v.currentTime=4;await v.play()}')
   page.wait_for_timeout(1700)

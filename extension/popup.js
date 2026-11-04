@@ -66,7 +66,10 @@ async function load(){
     $('account').textContent=state.connected?'已连接 '+(state.providerName||'ChatGPT')+(state.connectionMethod==='local-codex'?'（本机官方组件）':'')+' · '+(state.email||'账号'):state.authError||'请连接所选来源的账号。';
     $('pairing').hidden=true;
     if(!state.connected){$('model').replaceChildren(new Option('请先连接所选来源',''));$('quota-short').textContent='请先连接账号';$('quota-content').textContent='连接账号后查看额度。';notify('请先在设置中连接账号。');return;}
-    notify('准备就绪');$('clear').disabled=false;loadQuota();
+    notify('准备就绪');$('clear').disabled=false;
+    // Quota is an explicit details action, never a prerequisite for translating.
+    quotaSerial++;$('quota-short').textContent='按需查看';
+    $('quota-content').textContent='打开详情时读取官方额度。';
     const saved=await chrome.storage.local.get(['model','modelsByProvider','modelCatalogs']);
     if(serial!==loadSerial)return;
     const savedModel=saved.modelsByProvider?.[provider]||(provider==='chatgpt'?saved.model:null);
@@ -138,7 +141,7 @@ async function loadQuota(){
       p.textContent=w.name+' 剩余 '+w.remainingPercent+'%'+reset;node.append(p);
     }
     const note=document.createElement('small');note.textContent=q.message||'官方未提供可核验的余额。';node.append(note);
-    $('quota-short').textContent=q.available&&(q.windows||[]).length?'可查看':'暂不可用';
+    $('quota-short').textContent=q.stale?(q.available?'上次结果':'翻译后查看'):(q.available&&(q.windows||[]).length?'可查看':'暂不可用');
   }catch(e){if(serial!==quotaSerial)return;$('quota-content').textContent='暂时无法读取官方额度；不会用 Token 推算订阅余额。';$('quota-short').textContent='暂不可用';}
 }
 $('quota-refresh').onclick=loadQuota;

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies
 from local_engine import EngineError
 from translation_errors import upstream_error
+from translation_metrics import timed_translation
 
 VERSION='1.4.5'
 ROOT=Path.home()/'Library/Application Support/NewsBridge'
@@ -167,8 +168,8 @@ class AntigravityEngine:
         threading.Thread(target=work,daemon=True).start()
         return dict(self.auth)
 
-    def translate(self,instructions,payload,model,on_usage=None,cancel=None):
-        with self.lock:
+    def translate(self,instructions,payload,model,on_usage=None,cancel=None,on_timing=None,on_text=None):
+        with timed_translation(self.lock,on_timing) as generating:
             if cancel and cancel.is_set():raise EngineError('已停止翻译。','cancelled')
             self.models()
             session=self.probe_session or self.new_session();self.probe_session=None
@@ -180,6 +181,7 @@ class AntigravityEngine:
             completed=None
             try:
                 self.send({'id':i,'method':'session/prompt','params':{'sessionId':sid,'prompt':[{'type':'text','text':request_text}]}})
+                generating()
                 chunks=[];usage=None;deadline=time.monotonic()+180
                 while time.monotonic()<deadline:
                     if cancel and cancel.is_set():raise EngineError('已停止翻译。','cancelled')
@@ -193,7 +195,9 @@ class AntigravityEngine:
                     params=event.get('params',{})
                     if params.get('sessionId')!=sid:continue
                     update=params.get('update',{});kind=update.get('sessionUpdate')
-                    if kind=='agent_message_chunk' and update.get('content',{}).get('type')=='text':chunks.append(update['content'].get('text',''))
+                    if kind=='agent_message_chunk' and update.get('content',{}).get('type')=='text':
+                        chunks.append(update['content'].get('text',''))
+                        if on_text:on_text(''.join(chunks))
                     if kind in ('tool_call','tool_call_update'):
                         self.send({'method':'session/cancel','params':{'sessionId':sid}})
                         raise EngineError('Antigravity 翻译意外尝试使用工具，已取消。')

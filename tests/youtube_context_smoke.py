@@ -25,14 +25,13 @@ with sync_playwright() as p:
  setup()
  page.wait_for_function('requests.length===1')
  page.wait_for_function('document.querySelector("#cgpt-youtube-subtitles").shadowRoot.querySelector(".translated").textContent.includes("模型译文")')
- first=page.evaluate('requests[0]');assert first['cueIds']==list(range(6)),first
+ first=page.evaluate('requests[0]');assert first['cueIds']==list(range(2)),first
  assert first['contextBefore']==[]
- assert all('number '+str(i) in v for i,v in zip(range(6,9),first['contextAfter']))
- page.evaluate('clock=30')
+ assert all('number '+str(i) in v for i,v in zip(range(2,5),first['contextAfter']))
  page.wait_for_function('requests.length===2')
  second=page.evaluate('requests[1]')
- assert second['cueIds'][0]==6 and len(second['contextBefore'])==3,second
- for n,pair in zip(range(3,6),second['contextBefore']):
+ assert second['cueIds'][0]==2 and len(second['contextBefore'])==2,second
+ for n,pair in zip(range(2),second['contextBefore']):
   assert 'number '+str(n)+' ' in pair['en'] and pair['zh']=='模型译文 '+str(n),pair
  assert second['contextAfter'][0].startswith('English cue number '+str(second['cueIds'][-1]+1)+' ')
  page.evaluate('clock=150')
@@ -42,7 +41,7 @@ with sync_playwright() as p:
  for n,pair in zip(range(27,30),third['contextBefore']):
   assert pair['en'].startswith('English cue number '+str(n)+' ') and 'zh' not in pair,pair
  # Long individual captions never make either context side grow without bound.
- setup(long=True);page.wait_for_function('requests.length===1');page.evaluate('clock=30')
+ setup(long=True)
  page.wait_for_function('requests.length===2')
  bounded=page.evaluate('requests[1]')
  assert sum(len(x['en'])+len(x.get('zh','')) for x in bounded['contextBefore'])<=1800

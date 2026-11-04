@@ -2,11 +2,11 @@
 import base64,hashlib,json,os,re,shutil
 from pathlib import Path
 
-VERSION='0.7.3'
+VERSION='0.7.5'
 NAME='local.chatgpt_web_translator'
 DEFAULT_DATA=Path.home()/'Library/Application Support/NewsBridge'
 DEFAULT_HOSTS=Path.home()/'Library/Application Support/Google/Chrome/NativeMessagingHosts'
-SERVICE_FILES=('helper.py','translation_policy.py','local_engine.py','antigravity_engine.py','youtube_captions.py','usage_store.py','translation_errors.py',
+SERVICE_FILES=('helper.py','translation_policy.py','translation_metrics.py','local_engine.py','antigravity_engine.py','youtube_captions.py','usage_store.py','translation_errors.py',
                'dashboard.html','dashboard.js','dashboard.css','logo.svg','native_host.py','install_support.py','diagnostics.py')
 
 def read_json(path,default=None):

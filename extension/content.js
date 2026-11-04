@@ -236,7 +236,8 @@
   async function translate(model, entries, run,provider,sessionId) {
     try {
       const done = new Set(entries.map((e,i)=>(e.insertAfter||e.el).nextElementSibling?.classList.contains('nb-translation')?String(i):null).filter(x=>x!==null));
-      await globalThis.__cgptBridge.run({model,provider,sessionId:sessionId||'',kind:'news',newsMode:entries.every(e=>e.group==='article')?'article':'feed',groups:entries.map(e=>e.group),title:document.title,paragraphs:entries.map(e=>e.text)},{
+      const priority=entries.flatMap((e,i)=>{const r=e.el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight?[i]:[];});
+      await globalThis.__cgptBridge.run({model,provider,sessionId:sessionId||'',kind:'news',newsMode:entries.every(e=>e.group==='article')?'article':'feed',priority,groups:entries.map(e=>e.group),title:document.title,paragraphs:entries.map(e=>e.text)},{
         cancelled:()=>run!==generation,id:id=>{job=id;},notice:message=>{if(run===generation)status(message);},
         update:state=>{
         if(run!==generation)return;

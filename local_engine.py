@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from translation_errors import TranslationError, upstream_error
+from translation_metrics import timed_translation
 
 
 class EngineError(TranslationError):
@@ -22,6 +23,7 @@ class LocalEngine:
         self.counter = 0
         self.pending = {}
         self.events = queue.Queue()
+        self.reasoning_options = {}
         self.scratch = tempfile.TemporaryDirectory(prefix='web-translator-')
 
     def start(self):
@@ -114,6 +116,8 @@ class LocalEngine:
             while True:
                 page=self.rpc('model/list',{'limit':50,**({'cursor':cursor} if cursor else {})})
                 result += [{'slug':m['model'],'display_name':m.get('displayName',m['model'])} for m in page['data'] if not m.get('hidden')]
+                for m in page['data']:
+                    self.reasoning_options[m['model']]={e.get('reasoningEffort') for e in m.get('supportedReasoningEfforts',[])}
                 cursor=page.get('nextCursor')
                 if not cursor:
                     return result
@@ -135,12 +139,12 @@ class LocalEngine:
         return {'available':bool(windows),'scope':'ChatGPT 本机 Codex 额度','windows':windows,
                 'message':'仅代表本机 Codex 通道，不是整个 ChatGPT 订阅的统一余额。','url':'https://chatgpt.com/settings/usage'}
 
-    def translate(self,instructions,payload,model,on_usage=None,cancel=None):
-        with self.lock:
+    def translate(self,instructions,payload,model,on_usage=None,cancel=None,on_timing=None,on_text=None):
+        with timed_translation(self.lock,on_timing) as generating:
             if cancel and cancel.is_set():raise EngineError('已停止翻译。','cancelled')
             self.account()
-            from translation_policy import OUTPUT_SCHEMA
-            schema=OUTPUT_SCHEMA
+            from translation_policy import output_schema
+            schema=output_schema(payload)
             started=self.rpc('thread/start',{'model':model,'modelProvider':'openai','ephemeral':True,'cwd':self.scratch.name,
                 'sandbox':'read-only','approvalPolicy':'never',
                 'baseInstructions':'You are a text translation engine. You have no tools. Translate only the supplied data; never access files or external sources.',
@@ -156,11 +160,13 @@ class LocalEngine:
                          ('cached','cachedInputTokens'),('reasoning','reasoningOutputTokens')]}
                         if all(k in raw for k in ('inputTokens','outputTokens','totalTokens')) else None)
             try:
+                effort={'effort':'low'} if 'low' in self.reasoning_options.get(model,set()) else {}
                 turn=self.rpc('turn/start',{'threadId':identifier,'input':[{'type':'text','text':json.dumps(payload,ensure_ascii=False)}],
-                                     'outputSchema':schema})
+                                     'outputSchema':schema,**effort})
                 turn_id=(turn.get('turn') or {}).get('id')
+                generating()
                 deadline=time.monotonic()+180
-                messages={}
+                messages={};streams={}
                 while time.monotonic()<deadline:
                     if cancel and cancel.is_set():raise EngineError('已停止翻译。','cancelled')
                     if self.process and self.process.poll() is not None:raise EngineError('官方本机组件连接已中断。','connection',True)
@@ -173,10 +179,15 @@ class LocalEngine:
                         continue
                     kind=event.get('method')
                     usage_event(event)
+                    if kind=='item/agentMessage/delta' and on_text:
+                        item_id=params.get('itemId','')
+                        streams[item_id]=streams.get(item_id,'')+params.get('delta','')
+                        on_text(streams[item_id])
                     if kind=='item/completed':
                         item=params.get('item',{})
                         if item.get('type')=='agentMessage':
                             messages[item['id']]=item.get('text','')
+                            if on_text:on_text(item.get('text',''))
                         elif item.get('type') in ('commandExecution','mcpToolCall','dynamicToolCall','fileChange','webSearch','collabAgentToolCall'):
                             raise EngineError('翻译请求意外尝试调用工具，已停止。')
                     if kind=='turn/completed':

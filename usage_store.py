@@ -31,8 +31,24 @@ class UsageStore:
             db.execute('CREATE INDEX IF NOT EXISTS usage_day ON token_usage(day)')
             db.execute('CREATE INDEX IF NOT EXISTS usage_page ON token_usage(page_key)')
             db.execute('CREATE INDEX IF NOT EXISTS usage_session ON token_usage(session_id,page_key)')
+            db.execute('''CREATE TABLE IF NOT EXISTS translation_performance (
+                request_id TEXT PRIMARY KEY,created REAL,provider TEXT,model TEXT,kind TEXT,
+                segments INTEGER,source_chars INTEGER,total_ms INTEGER,outcome TEXT,
+                queue_ms INTEGER,setup_ms INTEGER,generation_ms INTEGER)''')
 
     def db(self):return sqlite3.connect(self.path,timeout=15)
+
+    def record_performance(self,rid,provider,model,kind,segments,chars,total_ms,outcome,timing):
+        with self.db() as db:
+            db.execute('INSERT OR REPLACE INTO translation_performance VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                (rid,time.time(),provider,model,kind,segments,chars,total_ms,outcome,
+                 *(timing.get(k) for k in ('queue_ms','setup_ms','generation_ms'))))
+            db.execute('DELETE FROM translation_performance WHERE request_id IN (SELECT request_id FROM translation_performance ORDER BY created DESC LIMIT -1 OFFSET 500)')
+
+    def performance(self):
+        with self.db() as db:
+            db.row_factory=sqlite3.Row
+            return [dict(r) for r in db.execute('SELECT * FROM translation_performance ORDER BY created DESC LIMIT 20')]
 
     def record(self,request_id,page_key,usage=None,now=None,provider='chatgpt',session_id=''):
         now=time.time() if now is None else now

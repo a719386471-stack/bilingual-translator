@@ -6,8 +6,8 @@
   let batchSerial=0,pendingRange=null,latency=6,hasWindow=false,suspended=false,failedStart=0;
   let playerResize = null, resizeFrame = null;
   let fontScale=100, nativeCount=0, nativeTimeline=[];
-  const nativeIndices=new Set(), linePages=new Map();
-  const measure=document.createElement('canvas').getContext('2d');
+  let seekVideo=null,seekHandler=null,seekPending=false,warmupNeeded=false;
+  const nativeIndices=new Set();
   const validScale=value=>Math.max(50,Math.min(200,Number(value)||100));
   let cues = [], translated = new Map(), annotations = [], loading = false, model, provider, sessionId='', currentVideo = '';
   const text = el => el?.textContent?.replace(/\s+/g,' ').trim() || '';
@@ -30,6 +30,8 @@
     if(suppressClick){document.removeEventListener('click',suppressClick,true);suppressClick=null;}
     if(finishDrag){for(const type of ['pointerup','mouseup','pointercancel'])document.removeEventListener(type,finishDrag,true);finishDrag=null;}
     clearInterval(timer);timer=null;
+    if(seekHandler)seekVideo?.removeEventListener('seeking',seekHandler);
+    seekVideo=null;seekHandler=null;seekPending=false;warmupNeeded=false;
     playerResize?.disconnect();playerResize=null;
     document.removeEventListener('fullscreenchange',scheduleOverlayResize);
     window.removeEventListener('resize',scheduleOverlayResize);
@@ -38,7 +40,7 @@
     job=null;overlay?.remove();overlay=null;
     document.querySelectorAll('#cgpt-youtube-subtitles,.cgpt-transcript-translation').forEach(node=>node.remove());
     annotations.forEach(n=>n.remove());annotations=[];
-    cues=[];translated.clear();nativeCount=0;nativeTimeline=[];nativeIndices.clear();linePages.clear();
+    cues=[];translated.clear();nativeCount=0;nativeTimeline=[];nativeIndices.clear();
   }
   function resizeOverlay() {
     resizeFrame=null;
@@ -49,7 +51,6 @@
     if(!width||!height)return;
     const size=Math.max(14,Math.min(56,width*.024,height*.05))*fontScale/100;
     overlay.style.setProperty('--cgpt-caption-size',size+'px');
-    linePages.clear();
     overlay.style.bottom=Math.max(40,Math.min(76,height*.065))+'px';
   }
   function scheduleOverlayResize() {
@@ -57,17 +58,17 @@
   }
   function makeOverlay() {
     overlay=document.createElement('div');overlay.id='cgpt-youtube-subtitles';
-    overlay.dataset.layoutProtocol='compact-timed-v1';overlay.dataset.resizeProtocol='pointer-v2';overlay.dataset.bufferProtocol='adaptive-v1';
+    overlay.dataset.layoutProtocol='paired-clause-v3';overlay.dataset.resizeProtocol='pointer-v2';overlay.dataset.bufferProtocol='stream-prefetch-v2';
     overlay.dataset.captionSource=nativeCount?(nativeCount===cues.length?'manual-chinese':'manual-chinese-and-ai'):'ai';
     overlay.style.cssText='position:absolute;left:8%;right:8%;bottom:70px;z-index:65;text-align:center;pointer-events:none;';
     const shadow=overlay.attachShadow({mode:'closed'});
     const style=document.createElement('style');style.textContent=`
       #caption-box{position:relative;display:inline-block;box-sizing:border-box;max-width:100%;color:#fff;pointer-events:auto;
-        font:500 var(--cgpt-caption-size,22px)/1.18 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;
+        font:500 var(--cgpt-caption-size,22px)/1.18 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;white-space:normal;
         background:linear-gradient(180deg,rgba(14,22,18,.30),rgba(10,16,13,.40));backdrop-filter:none;-webkit-backdrop-filter:none;
         border:1px solid rgba(255,255,255,.06);box-shadow:0 2px 6px rgba(0,0,0,.12);padding:.07em .34em .09em;
         text-shadow:0 1px 3px #000,0 0 2px #000;outline:1.5px solid transparent;outline-offset:4px;border-radius:.32em;transition:outline-color .15s,box-shadow .15s}
-      #caption-box[hidden]{display:none}.line{display:table;box-sizing:border-box;max-width:100%;margin:0 auto;padding:0;border-radius:.1em}
+      #caption-box[hidden]{display:none}.line{display:block;box-sizing:border-box;max-width:100%;margin:0 auto;padding:0;border-radius:.1em;white-space:normal;overflow-wrap:anywhere}
       .line:empty{display:none}
       .original{font-size:.74em;font-weight:450;line-height:1.16;color:rgba(232,242,237,.86);letter-spacing:.005em}
       .translated{margin-top:.05em;font-weight:560;line-height:1.18;color:#fff;letter-spacing:.015em}
@@ -155,32 +156,11 @@
     // Do not leave the final line on screen after its unknown end time.
     return i>=0 && time < (cues[i].end ?? (cues[i+1]?.start ?? cues[i].start+8)) ? i : -1;
   }
-  // Show every word in timed fragments instead of stacking long cues or clipping them.
+  // Keep both languages on the same complete cue. Independent character-based
+  // paging cannot preserve meaning across languages (especially reordered clauses).
   function lineAt(value,cue,time,node) {
     const full=String(value||'').replace(/\s+/g,' ').trim();
-    node.title=full;
-    if(!full||!cue)return full;
-    const css=getComputedStyle(node),width=Math.max(60,overlay.clientWidth-38);
-    const key=css.font+'|'+width+'|'+full;
-    let pages=linePages.get(key);
-    if(!pages){
-      measure.font=css.font;pages=[];let rest=Array.from(full);
-      while(rest.length){
-        let count=0,lastBreak=0;
-        while(count<rest.length&&measure.measureText(rest.slice(0,count+1).join('')).width<=width){
-          if(/[\s，。！？；、,.!?;:]/u.test(rest[count]))lastBreak=count+1;
-          count++;
-        }
-        if(count<rest.length&&lastBreak>count*.55)count=lastBreak;
-        count=Math.max(1,count);pages.push(rest.splice(0,count).join('').trim());
-      }
-      if(linePages.size>120)linePages.clear();linePages.set(key,pages);
-    }
-    const duration=Math.max(.1,(cue.end??cue.start+8)-cue.start);
-    const progress=Math.max(0,Math.min(.999999,(time-cue.start)/duration));
-    let remaining=progress*pages.reduce((n,p)=>n+p.length,0);
-    for(const page of pages){remaining-=page.length;if(remaining<0)return page;}
-    return pages.at(-1)||'';
+    node.title=full;return full;
   }
   function manualAt(time){
     let lo=0,hi=nativeTimeline.length;
@@ -189,9 +169,34 @@
   }
   function annotateCue(i,value) {
     if(!cues[i].el?.isConnected)return;
+    if(cues[i].translationEl?.isConnected){cues[i].translationEl.textContent=value;return;}
     const node=document.createElement('div');node.className='cgpt-transcript-translation';node.textContent=value;node.lang='zh-CN';
     node.style.cssText='color:var(--yt-spec-text-primary,#e2eae5);opacity:.88;font:400 13.5px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:.01em;border-left:2px solid #4d8b70;margin:2px 12px 10px 10px;padding:3px 10px;background:rgba(77,139,112,.075);border-radius:0 6px 6px 0;white-space:pre-wrap;';
-    cues[i].el.after(node);annotations.push(node);
+    cues[i].el.after(node);cues[i].translationEl=node;annotations.push(node);
+  }
+  function groupRollingCues(items) {
+    // Prefer clause boundaries over arbitrary ASR line breaks. A punctuation break
+    // inside one ASR cue is estimated within that cue's time span; both languages
+    // always use the same resulting interval, never separate language pagination.
+    const pieces=items.flatMap(cue=>{
+      const parts=cue.text.match(/.*?[.!?;,](?:\s+|$)|.+$/gu)||[cue.text];
+      let offset=0;
+      return parts.map(part=>{
+        const start=cue.start+(cue.end-cue.start)*offset/cue.text.length;
+        offset+=part.length;
+        return {...cue,text:part.trim(),start,end:cue.start+(cue.end-cue.start)*offset/cue.text.length,el:parts.length===1?cue.el:null};
+      }).filter(c=>c.text);
+    });
+    const groups=[];
+    for(const cue of pieces){
+      const prev=groups.at(-1);
+      if(prev&&cue.start<=prev.end+.4&&cue.end-prev.start<=10&&
+          prev.text.length+cue.text.length+1<=180&&!/[.!?]["”']?$/.test(prev.text)&&
+          !(prev.text.length>=45&&/[,;]$/.test(prev.text))&&!/^\s*>>/.test(cue.text)){
+        prev.text+=' '+cue.text;prev.end=cue.end;prev.el=null;
+      }else groups.push({...cue});
+    }
+    return groups;
   }
   function sourceLabel() {
     return nativeCount?(nativeCount===cues.length?'字幕来源：视频原有人工中文字幕':'字幕来源：人工中文字幕＋AI 补译'):'字幕来源：所选 AI';
@@ -213,10 +218,11 @@
     const video=document.querySelector('video');
     const rate=Math.max(.5,Math.min(3,video?.playbackRate||1));
     // Quick initial result, then larger time-based buffers to amortize context.
-    const horizon=(hasWindow?Math.min(100,Math.max(55,latency*3+20)):18)*rate;
+    const initial=!hasWindow;warmupNeeded=false;
+    const horizon=(initial?9:Math.min(100,Math.max(65,latency*3+25)))*rate;
     const indices=[];let chars=0;
     for(let i=start;i<cues.length;i++){
-      if(indices.length>=32||(indices.length>=6&&(cues[i].start-cues[start].start>=horizon||chars+cues[i].text.length>6500)))break;
+      if(indices.length>=(initial?3:32)||(indices.length>=(initial?1:6)&&(cues[i].start-cues[start].start>=horizon||chars+cues[i].text.length>6500)))break;
       if(!translated.has(i)){indices.push(i);chars+=cues[i].text.length;}
     }
     pendingRange={first:start,last:indices.at(-1)??start};
@@ -229,14 +235,15 @@
         update:state=>{
           if(!valid())return;
           for(const [k,value]of Object.entries(state.results)){
-            const i=indices[Number(k)];if(i===undefined||translated.has(i))continue;
+            const i=indices[Number(k)];if(i===undefined||translated.get(i)===value)continue;
             translated.set(i,value);
             annotateCue(i,value);
           }
           label.textContent=`${sourceLabel()} · 已就绪 ${translated.size} / ${cues.length} 条`;
+          tick();
         }
       });
-      if(valid()){latency=Math.max(2,Math.min(45,latency*.5+(performance.now()-began)/2000));hasWindow=true;}
+      if(valid()){latency=Math.max(2,Math.min(45,latency*.5+(performance.now()-began)/2000));hasWindow=true;warmupNeeded=initial;}
     }catch(e){
       if(valid()){
         suspended=true;failedStart=start;label.textContent=e.message+' · 已有字幕保留';retryButton.hidden=false;
@@ -258,16 +265,17 @@
     const next=index>=0?index:cues.findIndex(c=>c.start>video.currentTime);
     if(next<0)return;
     // A far seek must not wait for a stale buffer from a different part of the video.
-    if(loading&&pendingRange&&!translated.has(next)&&(next<pendingRange.first-2||next>pendingRange.last+2)){
+    if(seekPending&&loading&&pendingRange&&!translated.has(next)&&(next<pendingRange.first-2||next>pendingRange.last+2)){
       if(job)api('cancel',null,job).catch(()=>{});
       batchSerial++;loading=false;pendingRange=null;job=null;
     }
+    seekPending=false;
     if(loading||suspended)return;
     let missing=next;while(missing<cues.length&&translated.has(missing))missing++;
     if(missing>=cues.length)return;
     const ahead=cues[missing].start-video.currentTime;
-    const lead=Math.max(18,Math.min(55,latency*1.5+8))*(video.playbackRate||1);
-    if(!hasWindow||!translated.has(next)||(!video.paused&&ahead<lead))loadBatch(missing,run);
+    const lead=Math.max(35,Math.min(70,latency*2+12))*(video.playbackRate||1);
+    if(!hasWindow||!translated.has(next)||warmupNeeded||(!video.paused&&ahead<lead))loadBatch(missing,run);
   }
   async function start(chosen,scale,chosenProvider,chosenSession) {
     stop();fontScale=validScale(scale);const epoch=run;model=chosen;provider=chosenProvider;sessionId=chosenSession||'';currentVideo=new URL(location.href).searchParams.get('v');
@@ -298,6 +306,9 @@
         }else throw transcriptError||new Error('没有找到公开英文字幕，请尝试打开网页转录文稿。');
       }
     }
+    // Rolling ASR cues overlap; advance the pair at the next source boundary.
+    cues=cues.map((c,i)=>({...c,end:Math.min(c.end??Infinity,cues[i+1]?.start??c.end??c.start+8)}));
+    if(canonical?.isGenerated&&!canonical.nativeChinese)cues=groupRollingCues(cues);
     const sample=cues.slice(0,20).map(c=>c.text).join('');
     if((sample.match(/[a-z]/gi)||[]).length<(sample.match(/[\u3400-\u9fff]/g)||[]).length)throw new Error('请将转录文稿语言切换为英文后重试。');
     // Manual Chinese is already a translation: reuse it without a model request.
@@ -313,7 +324,8 @@
       .filter(c=>typeof c.text==='string'&&Number.isFinite(c.start)&&Number.isFinite(c.duration)&&c.duration>0)
       .map(c=>({text:c.text,start:c.start,end:c.start+c.duration})).sort((a,b)=>a.start-b.start);
     hasWindow=nativeCount>0;
-    active=true;makeOverlay();label.textContent=sourceLabel()+' · 已就绪 '+translated.size+' / '+cues.length+' 条';timer=setInterval(tick,350);tick();
+    active=true;makeOverlay();label.textContent=sourceLabel()+' · 已就绪 '+translated.size+' / '+cues.length+' 条';seekVideo=document.querySelector('video');seekHandler=()=>{seekPending=true;tick();};
+    seekVideo.addEventListener('seeking',seekHandler);timer=setInterval(tick,100);tick();
   }
   chrome.runtime.onMessage.addListener((m,s,reply)=>{
     if(s.id!==chrome.runtime.id)return;

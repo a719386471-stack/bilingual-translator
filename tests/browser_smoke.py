@@ -22,7 +22,8 @@ with tempfile.TemporaryDirectory() as tmp:
  app=helper.App(Path(tmp)/'data')
  app.status=lambda:{'connected':True,'email':'browser-test@example.invalid','authError':'','provider':app.provider(),'providerName':'Antigravity' if app.provider()=='antigravity' else 'ChatGPT'}
  app.models=lambda *args:[{'slug':'fixture-flash-low','display_name':'Fixture Flash'}] if (args[0] if args else app.provider())=='antigravity' else [{'slug':'test-model','display_name':'Test model (fixture)'}]
- app.antigravity.quota=lambda:{'available':True,'scope':'Antigravity fixture','windows':[{'name':'Gemini 周额度','remainingPercent':90,'resetsAt':1793800000}],'message':'Fixture only'}
+ quota_calls=[]
+ app.antigravity.quota=lambda:(quota_calls.append(1) or {'available':True,'scope':'Antigravity fixture','windows':[{'name':'Gemini 周额度','remainingPercent':90,'resetsAt':1793800000}],'message':'Fixture only'})
  app.local_engine.quota=lambda:{'available':False,'scope':'fixture','message':'No real account in fixture'}
  calls=[]
  def infer(title,paragraphs,previous,model,**kwargs):
@@ -46,8 +47,10 @@ with tempfile.TemporaryDirectory() as tmp:
   popup.locator('[data-provider="antigravity"]').click()
   expect(popup.locator('#account')).to_contain_text('已连接 Antigravity')
   expect(popup.locator('#model')).to_have_value('fixture-flash-low')
+  assert not quota_calls,'Opening or switching the panel must not trigger quota RPC'
   popup.locator('#open-quota').click()
   expect(popup.locator('#quota-content')).to_contain_text('90%')
+  assert len(quota_calls)==1
   popup.locator('#quota-view .back').click()
   popup.locator('[data-provider="chatgpt"]').click()
   expect(popup.locator('#model')).to_have_value('test-model')

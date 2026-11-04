@@ -94,7 +94,7 @@ class CaptionStore:
             raise CaptionsError('暂时无法读取 YouTube 英文字幕（%s），请检查网络后重试。' % kind,'connection',True) from None
         if not cues or len(cues)>15000:
             raise CaptionsError('字幕为空或超出当前支持的长度。')
-        result={'cues':cues,'language':transcript.language_code}
+        result={'cues':cues,'language':transcript.language_code,'isGenerated':bool(getattr(transcript,'is_generated',False))}
         if native and any(native['translations']):result['nativeChinese']=native
         with self.lock:
             self.cache={k:v for k,v in self.cache.items() if v[0]>time.time()-900}

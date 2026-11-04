@@ -20,7 +20,7 @@ with sync_playwright() as p:
   box=page.locator('#caption-box').bounding_box();assert box['height']<540*.16,box
  assert page.evaluate('requests')==0
  page.evaluate('clock=9.2');expect(page.locator('#caption-box')).to_be_hidden()
- # Extremely long cues page through all characters, never ellipsize or stack.
+ # Long cues wrap as a complete pair, never independently page or truncate.
  page.evaluate('''()=>{listener({action:'restore'},{id:'fixture'},()=>{});clock=0;window.longText='这是一段需要完整显示的较长中文字幕，不能截断丢失内容，也不能把好几句话同时堆叠遮挡整个画面。';__cgptBridge.raw=async()=>({cues:[{text:'A longer English sentence that remains fully available while the caption display uses compact timed fragments instead of stacking multiple lines.',start:0,duration:20}],nativeChinese:{source:'manual',translations:[longText]}})}''')
  page.evaluate('()=>new Promise(resolve=>listener({action:"translate",model:"fixture",provider:"chatgpt",captionScale:180},{id:"fixture"},resolve))')
  segments=[]
@@ -28,7 +28,8 @@ with sync_playwright() as p:
   page.evaluate('t=>clock=t',time);page.wait_for_timeout(370)
   text=page.locator('.translated').inner_text()
   if not segments or segments[-1]!=text:segments.append(text)
-  box=page.locator('#caption-box').bounding_box();assert box['height']<540*.2,box
+  assert text==page.evaluate('longText'),text
+  box=page.locator('#caption-box').bounding_box();assert box['height']<540*.45,box
   assert box['x']>=20 and box['x']+box['width']<=980,box
  assert ''.join(segments)==page.evaluate('longText'),segments
  page.screenshot(path=str(root/'compact-captions-fixture.png'))

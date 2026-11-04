@@ -36,8 +36,8 @@ def build(out):
  files['README.md']=(readme if readme.is_file() else ROOT/'README.md').read_bytes()
  for directory in ('extension','packaging','tests'):
   for p in (ROOT/directory).rglob('*'):
-   if p.is_file() and '__pycache__' not in p.parts and p.suffix!='.pyc':
-    if directory=='tests' and p.suffix!='.py':continue
+   if p.is_file() and p.name!='.DS_Store' and '__pycache__' not in p.parts and p.suffix!='.pyc':
+    if directory=='tests' and p.suffix not in {'.py','.js'}:continue
     files[str(p.relative_to(ROOT))]=p.read_bytes()
  audit(files)
  for name,raw in files.items():

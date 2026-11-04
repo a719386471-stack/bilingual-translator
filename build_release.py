@@ -12,8 +12,8 @@ def build(assets,out=None):
     sources=set(SERVICE_FILES)|{'setup_installer.py','install_native_host.py','install_antigravity.py','uninstall.py','requirements-lock.txt','requirements.txt','LICENSE','PRIVACY.md','THIRD_PARTY_NOTICES.md'}
     sources|={'安装与修复.command','启动翻译器.command','安装Antigravity.command','卸载后台（保留可恢复备份）.command','快速开始.txt'}
     for name in sorted(sources):shutil.copy2(ROOT/name,folder/name)
-    shutil.copytree(ROOT/'extension',folder/'extension',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-    shutil.copytree(ROOT/'packaging',folder/'packaging')
+    shutil.copytree(ROOT/'extension',folder/'extension',ignore=shutil.ignore_patterns('__pycache__','*.pyc','.DS_Store'))
+    shutil.copytree(ROOT/'packaging',folder/'packaging',ignore=shutil.ignore_patterns('__pycache__','*.pyc','.DS_Store'))
     shutil.copy2(ROOT/'快速开始.txt',folder/'README.txt')
     public=(ROOT/'packaging/release-public-key.txt').read_text().strip()
     m=json.loads((folder/'extension/manifest.json').read_text());m['key']=public;(folder/'extension/manifest.json').write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n')
